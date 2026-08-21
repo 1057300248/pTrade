@@ -250,6 +250,15 @@ def lot_size(cash, price):
     return shares
 
 
+def plan_rebalance(held, target):
+    held_list = list(held or [])
+    target_list = list(target or [])
+    sells = [code for code in held_list if code not in target_list]
+    buys = [code for code in target_list if code not in held_list]
+    keeps = [code for code in target_list if code in held_list]
+    return sells, buys, keeps
+
+
 # ---------------------------------------------------------------------------
 # PTrade 生命周期
 # ---------------------------------------------------------------------------
@@ -273,6 +282,7 @@ def initialize(context):
     g.defensive = list(DEFAULT_DEFENSIVE)
     g.etf_pool = list(dict.fromkeys(DEFAULT_DEFENSIVE + DEFAULT_GROWTH))
     g.last_target = []
+    g.pending_target = []
     g.pending_orders = {}
 
     set_universe(g.etf_pool)
@@ -284,6 +294,7 @@ def initialize(context):
 
     run_daily(context, rebalance, time=g.trade_time)
     if is_trade():
+        run_daily(context, rebalance_buy, time="14:54")
         run_daily(context, park_cash_in_repo, time="14:57")
 
 
@@ -303,13 +314,41 @@ def handle_data(context, data):
 
 def after_trading_end(context, data):
     positions = _held_etfs(context)
-    log.info(
-        "日终 总资产=%.2f 现金=%.2f 持仓=%s 目标=%s",
+    log.info("日终 总资产=%.2f 现金=%.2f 持仓=%s 目标=%s" % (
         context.portfolio.portfolio_value,
         context.portfolio.cash,
         str(positions),
         str(g.last_target),
-    )
+    ))
+
+
+def _normalize_security_code(code):
+    if code is None:
+        return None
+    code = str(code)
+    if code.endswith(".XSHG"):
+        return code[:-5] + ".SS"
+    if code.endswith(".XSHE"):
+        return code[:-5] + ".SZ"
+    return code
+
+
+def _remember_order(code, order_id):
+    if order_id is None:
+        return
+    code = _normalize_security_code(code)
+    if code is not None:
+        g.pending_orders[code] = str(order_id)
+
+
+def _clear_pending_order(code):
+    code = _normalize_security_code(code)
+    if code in g.pending_orders:
+        del g.pending_orders[code]
+
+
+def _has_pending_order(code):
+    return _normalize_security_code(code) in g.pending_orders
 
 
 def on_order_response(context, order_list):
@@ -317,21 +356,27 @@ def on_order_response(context, order_list):
         return
     for order_info in order_list:
         status = str(order_info.get("status", ""))
-        sid = order_info.get("stock_code") or order_info.get("sid") or order_info.get("symbol")
+        sid = _normalize_security_code(
+            order_info.get("stock_code") or order_info.get("sid") or order_info.get("symbol")
+        )
+        if status in ("5", "6", "8", "9"):
+            _clear_pending_order(sid)
         if status == "9":
-            log.info("废单 %s 原因=%s", str(sid), str(order_info.get("error_info")))
+            log.info("废单 %s 原因=%s" % (str(sid), str(order_info.get("error_info"))))
 
 
 def on_trade_response(context, trade_list):
     if not trade_list:
         return
     for trade_info in trade_list:
-        log.info(
-            "成交 %s 数量=%s 价格=%s",
-            str(trade_info.get("stock_code")),
+        sid = _normalize_security_code(trade_info.get("stock_code"))
+        if str(trade_info.get("status", "")) == "8":
+            _clear_pending_order(sid)
+        log.info("成交 %s 数量=%s 价格=%s" % (
+            str(sid),
             str(trade_info.get("business_amount")),
             str(trade_info.get("business_price")),
-        )
+        ))
 
 
 def rebalance(context, data=None):
@@ -344,11 +389,14 @@ def rebalance(context, data=None):
         if delta < g.rebalance_days:
             return
     hist_map = _load_histories(g.etf_pool, g.max_days + 10)
+    if not hist_map:
+        log.info("未取得任何ETF历史行情，本次不调仓")
+        return
     bench = hist_map.get(g.benchmark)
     bench_close = None if bench is None else bench.get("close")
     if bench_close is None:
-        # 没有沪深300ETF行情时退化为全池可交易
-        regime = REGIME_RISK_ON
+        # 基准行情缺失时采取防御状态，不能放大为全池风险偏好。
+        regime = REGIME_RISK_OFF
     else:
         regime = detect_regime(bench_close, g.ma_window)
     pool = eligible_pool(regime, g.etf_pool, g.defensive)
@@ -372,21 +420,41 @@ def rebalance(context, data=None):
             continue
         score_map[code] = result["score"]
 
+    if not score_map:
+        log.info("ETF行情存在但没有可用评分，本次保留原持仓")
+        return
     current = _held_etfs(context)
     target = select_holdings(score_map, current, g.hold_num, g.score_floor, g.gap)
     g.last_target = list(target)
+    g.pending_target = list(target)
     if today is not None:
         try:
             g.last_rebalance_date = today.date()
         except Exception:
             g.last_rebalance_date = today
-    log.info("regime=%s pool=%d target=%s scores=%s", regime, len(pool), str(target), _top_scores(score_map, 5))
+    log.info("regime=%s pool=%d target=%s scores=%s" % (
+        regime,
+        len(pool),
+        str(target),
+        _top_scores(score_map, 5),
+    ))
 
+    _align_positions(context, target)
+
+
+def rebalance_buy(context, data=None):
+    if g.pending_orders:
+        log.info("仍有未完成委托，推迟买入")
+        return
+    target = list(getattr(g, "pending_target", None) or g.last_target or [])
     _align_positions(context, target)
 
 
 def park_cash_in_repo(context, data=None):
     if not is_trade():
+        return
+    if g.pending_orders:
+        log.info("仍有未完成ETF委托，跳过逆回购")
         return
     cash = float(context.portfolio.cash)
     if cash < 10000:
@@ -401,53 +469,106 @@ def park_cash_in_repo(context, data=None):
         code = "204001.SS"
     amount = int(math.floor(cash / 1000.0) * 10)
     if amount >= 10:
-        order(code, -amount)
-        log.info("逆回购 %s 数量=%d", code, amount)
+        order_id = order(code, -amount)
+        _remember_order(code, order_id)
+        log.info("逆回购 %s 数量=%d" % (code, amount))
 
 
 def _crash_flatten(context, data):
     hist_map = _load_histories(_held_etfs(context), g.max_days)
     for code in list(_held_etfs(context)):
+        if _has_pending_order(code):
+            continue
         bars = hist_map.get(code)
         if not bars:
             continue
         if crash_triggered(bars["close"], g.drop_1d, g.drop_3d):
-            order_target(code, 0)
-            log.info("盘中跌幅风控清仓 %s", code)
+            order_id = order_target(code, 0)
+            _remember_order(code, order_id)
+            log.info("盘中跌幅风控清仓 %s" % code)
 
 
 def _align_positions(context, target):
     held = _held_etfs(context)
+    sell_submitted = False
+
+    # 第一阶段只处理清仓。真实柜台不会立即把卖出资金同步回可用现金，
+    # 因此有卖单时必须把买入推迟到下一次调仓。
     for code in held:
-        if code not in target:
-            order_target(code, 0)
-            log.info("卖出非目标 %s", code)
+        if code not in target and not _has_pending_order(code):
+            order_id = order_target(code, 0)
+            if order_id is not None:
+                sell_submitted = True
+                _remember_order(code, order_id)
+                log.info("卖出非目标 %s" % code)
     if not target:
         return
+
     value = float(context.portfolio.portfolio_value) * (1.0 - g.cash_reserve)
     per = value / float(len(target))
+    position_map = {}
+    price_map = {}
+
+    # 第二阶段先减持目标中的超配仓位，仍然不与买单混在同一轮提交。
     for code in target:
+        if _has_pending_order(code):
+            continue
         price = _current_price(code)
         if price is None or price <= 0:
             continue
+        price_map[code] = price
         pos = get_position(code)
+        position_map[code] = pos
         current_amount = 0 if pos is None else int(getattr(pos, "amount", 0) or 0)
         current_value = current_amount * price
         diff_value = per - current_value
         if abs(diff_value) < price * 100:
             continue
-        shares = lot_size(abs(diff_value), price)
-        if shares < 100:
-            continue
-        if diff_value > 0:
-            order(code, shares)
-            log.info("买入 %s 数量=%d 价格=%.3f", code, shares, price)
-        else:
+        if diff_value < 0:
+            shares = lot_size(abs(diff_value), price)
             sell_amount = min(shares, current_amount)
             sell_amount = int(sell_amount / 100) * 100
             if sell_amount >= 100:
-                order(code, -sell_amount)
-                log.info("减仓 %s 数量=%d 价格=%.3f", code, sell_amount, price)
+                order_id = order(code, -sell_amount)
+                if order_id is not None:
+                    sell_submitted = True
+                    _remember_order(code, order_id)
+                    log.info("减仓 %s 数量=%d 价格=%.3f" % (code, sell_amount, price))
+
+    if sell_submitted:
+        log.info("本轮已提交卖单，等待资金和持仓同步后再买入")
+        return
+
+    # 第三阶段买入时只使用柜台当前可用现金，避免按总资产重复占用卖出款。
+    available_cash = float(context.portfolio.cash) * (1.0 - g.cash_reserve)
+    for code in target:
+        if _has_pending_order(code):
+            continue
+        price = price_map.get(code)
+        if price is None:
+            price = _current_price(code)
+        if price is None or price <= 0:
+            continue
+        if _etf_premium_too_high(code, price):
+            log.info("溢价过高，跳过 %s" % code)
+            continue
+        pos = position_map.get(code)
+        if pos is None:
+            pos = get_position(code)
+        current_amount = 0 if pos is None else int(getattr(pos, "amount", 0) or 0)
+        diff_value = per - current_amount * price
+        if diff_value < price * 100:
+            continue
+        desired_shares = lot_size(diff_value, price)
+        cash_shares = lot_size(available_cash, price)
+        shares = min(desired_shares, cash_shares)
+        if shares < 100:
+            continue
+        order_id = order(code, shares)
+        if order_id is not None:
+            _remember_order(code, order_id)
+            available_cash -= shares * price
+            log.info("买入 %s 数量=%d 价格=%.3f" % (code, shares, price))
 
 
 def _held_etfs(context):
@@ -465,8 +586,12 @@ def _held_etfs(context):
         amount = getattr(pos, "amount", None)
         if amount is None and isinstance(pos, dict):
             amount = pos.get("amount", 0)
-        if amount and amount > 0 and sid in g.etf_pool:
-            held.append(sid)
+        position_sid = getattr(pos, "sid", None)
+        if position_sid is None and isinstance(pos, dict):
+            position_sid = pos.get("sid")
+        code = _normalize_security_code(position_sid or sid)
+        if amount and amount > 0 and code in g.etf_pool and code not in held:
+            held.append(code)
     return held
 
 
@@ -474,20 +599,24 @@ def _load_histories(codes, count):
     result = {}
     if not codes:
         return result
-    try:
-        hist = get_history(count, "1d", ["open", "high", "low", "close"], codes, fq="pre", include=False)
-        parsed = _parse_history(hist, codes)
-        if parsed:
-            return parsed
-    except Exception:
-        pass
+    # 旧版 PTrade 对“多标的+多字段”返回 pandas.Panel，新版和本地框架
+    # 返回形态又不同。逐标的获取虽然调用次数更多，但可避免三维 Panel
+    # 被误当成价格序列，且与仓库中已运行的 V3 策略用法一致。
     for code in codes:
         try:
-            hist = get_history(count, "1d", ["open", "high", "low", "close"], code, fq="pre", include=False)
+            hist = get_history(
+                count,
+                "1d",
+                ["open", "high", "low", "close"],
+                code,
+                fq="pre",
+                include=False,
+            )
             parsed = _parse_history(hist, [code])
             if parsed:
                 result.update(parsed)
-        except Exception:
+        except Exception as exc:
+            log.info("获取历史行情失败 %s: %s" % (code, str(exc)))
             continue
     return result
 
@@ -578,21 +707,27 @@ def _extract_series(frame, key):
                 if key in frame.columns:
                     return np.asarray(frame[key].values, dtype=float)
         if hasattr(frame, "values") and not hasattr(frame, "columns"):
-            return np.asarray(frame.values, dtype=float)
+            values = np.asarray(frame.values, dtype=float)
+            if values.ndim == 1:
+                return values
     except Exception:
         return None
     return None
 
 
 def _current_price(code):
-    try:
-        snap = get_snapshot([code])
-        if snap and code in snap:
-            px = snap[code].get("last_px") or snap[code].get("last")
-            if px:
-                return float(px)
-    except Exception:
-        pass
+    if is_trade():
+        try:
+            # 使用字符串参数，与仓库中已有实盘策略保持一致。
+            snap = get_snapshot(code)
+            if snap and code in snap:
+                px = snap[code].get("last_px") or snap[code].get("last")
+                if px:
+                    return float(px)
+        except Exception as exc:
+            log.info("获取行情快照失败 %s: %s" % (code, str(exc)))
+        # 实盘快照失败时不能用昨收继续计算下单数量。
+        return None
     bars = _load_histories([code], 3).get(code)
     if bars and len(bars.get("close", [])) > 0:
         return float(bars["close"][-1])
@@ -609,6 +744,30 @@ def _last_px(code):
     except Exception:
         return None
     return None
+
+
+def _etf_premium_too_high(code, price, cap=0.03):
+    if not str(code).startswith("513"):
+        return False
+    try:
+        if not is_trade():
+            return False
+        info = get_etf_info(code)
+        if not info:
+            return False
+        if isinstance(info, dict) and code in info:
+            info = info[code]
+        iopv = None
+        if isinstance(info, dict):
+            iopv = info.get("IOPV") or info.get("iopv") or info.get("unit_net_value")
+        if not iopv:
+            return False
+        iopv = float(iopv)
+        if iopv <= 0 or price is None:
+            return False
+        return (float(price) - iopv) / iopv >= cap
+    except Exception:
+        return False
 
 
 def _top_scores(score_map, n):

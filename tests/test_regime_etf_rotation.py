@@ -10,6 +10,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+import regime_etf_rotation as strategy
 from regime_etf_rotation import (
     REGIME_RISK_OFF,
     REGIME_RISK_ON,
@@ -19,6 +20,7 @@ from regime_etf_rotation import (
     efficiency_coefficient,
     eligible_pool,
     lot_size,
+    plan_rebalance,
     select_holdings,
     weighted_log_trend_score,
 )
@@ -126,8 +128,154 @@ def test_strategy_file_has_no_fstrings():
     src_path = os.path.join(ROOT, "regime_etf_rotation.py")
     src = open(src_path, "r", encoding="utf-8").read()
     tree = ast.parse(src)
-    found = []
+    fstrings = []
+    variable_annotations = []
     for node in ast.walk(tree):
         if isinstance(node, ast.JoinedStr):
-            found.append(getattr(node, "lineno", "?"))
-    assert found == []
+            fstrings.append(getattr(node, "lineno", "?"))
+        if isinstance(node, ast.AnnAssign):
+            variable_annotations.append(getattr(node, "lineno", "?"))
+    assert fstrings == []
+    assert variable_annotations == []
+    assert "sklearn" not in src
+
+
+class _State(object):
+    pass
+
+
+class _Portfolio(object):
+    pass
+
+
+class _Context(object):
+    pass
+
+
+class _Position(object):
+    def __init__(self, sid, amount):
+        self.sid = sid
+        self.amount = amount
+
+
+class _Log(object):
+    def info(self, message):
+        return message
+
+    def warning(self, message):
+        return message
+
+
+def _install_runtime_state(monkeypatch, etf_pool):
+    state = _State()
+    state.etf_pool = list(etf_pool)
+    state.pending_orders = {}
+    state.cash_reserve = 0.02
+    monkeypatch.setattr(strategy, "g", state, raising=False)
+    monkeypatch.setattr(strategy, "log", _Log(), raising=False)
+    monkeypatch.setattr(strategy, "is_trade", lambda: False, raising=False)
+    return state
+
+
+def test_held_etfs_uses_position_sid_instead_of_four_letter_dict_key(monkeypatch):
+    _install_runtime_state(monkeypatch, ["510300.SS"])
+    positions = {"510300.XSHG": _Position("510300.SS", 100)}
+    monkeypatch.setattr(strategy, "get_positions", lambda: positions, raising=False)
+
+    assert strategy._held_etfs(_Context()) == ["510300.SS"]
+
+
+def test_load_histories_calls_old_ptrade_one_security_at_a_time(monkeypatch):
+    _install_runtime_state(monkeypatch, ["A.SS", "B.SS"])
+    calls = []
+
+    def fake_get_history(count, frequency, fields, security, fq=None, include=False):
+        calls.append(security)
+        return object()
+
+    def fake_parse_history(_hist, codes):
+        values = np.array([1.0, 1.1])
+        return {
+            codes[0]: {
+                "open": values,
+                "high": values,
+                "low": values,
+                "close": values,
+            }
+        }
+
+    monkeypatch.setattr(strategy, "get_history", fake_get_history, raising=False)
+    monkeypatch.setattr(strategy, "_parse_history", fake_parse_history)
+
+    result = strategy._load_histories(["A.SS", "B.SS"], 20)
+
+    assert calls == ["A.SS", "B.SS"]
+    assert sorted(result.keys()) == ["A.SS", "B.SS"]
+
+
+def test_align_positions_defers_buys_when_sell_was_submitted(monkeypatch):
+    _install_runtime_state(monkeypatch, ["A.SS", "B.SS"])
+    context = _Context()
+    context.portfolio = _Portfolio()
+    context.portfolio.portfolio_value = 100000.0
+    context.portfolio.cash = 1000.0
+    buys = []
+    sells = []
+
+    monkeypatch.setattr(strategy, "_held_etfs", lambda _context: ["A.SS"])
+    monkeypatch.setattr(strategy, "_current_price", lambda _code: 10.0)
+    monkeypatch.setattr(strategy, "get_position", lambda _code: None, raising=False)
+    monkeypatch.setattr(
+        strategy,
+        "order_target",
+        lambda code, amount: sells.append((code, amount)) or "sell-1",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy,
+        "order",
+        lambda code, amount: buys.append((code, amount)) or "buy-1",
+        raising=False,
+    )
+
+    strategy._align_positions(context, ["B.SS"])
+
+    assert sells == [("A.SS", 0)]
+    assert buys == []
+
+
+def test_align_positions_caps_buy_by_available_cash(monkeypatch):
+    _install_runtime_state(monkeypatch, ["A.SS"])
+    context = _Context()
+    context.portfolio = _Portfolio()
+    context.portfolio.portfolio_value = 100000.0
+    context.portfolio.cash = 2000.0
+    buys = []
+
+    monkeypatch.setattr(strategy, "_held_etfs", lambda _context: [])
+    monkeypatch.setattr(strategy, "_current_price", lambda _code: 10.0)
+    monkeypatch.setattr(strategy, "get_position", lambda _code: None, raising=False)
+    monkeypatch.setattr(
+        strategy,
+        "order",
+        lambda code, amount: buys.append((code, amount)) or "buy-1",
+        raising=False,
+    )
+
+    strategy._align_positions(context, ["A.SS"])
+
+    assert buys == [("A.SS", 100)]
+
+
+def test_plan_rebalance_splits_sells_and_buys():
+    sells, buys, keeps = plan_rebalance(["A", "B"], ["B", "C"])
+    assert sells == ["A"]
+    assert buys == ["C"]
+    assert keeps == ["B"]
+
+
+def test_plan_rebalance_empty_target_sells_all():
+    sells, buys, keeps = plan_rebalance(["A", "B"], [])
+    assert sells == ["A", "B"]
+    assert buys == []
+    assert keeps == []
