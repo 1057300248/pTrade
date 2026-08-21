@@ -421,8 +421,8 @@ def initialize(context):
 
     run_daily(context, crash_overlay, time="14:45")
     run_daily(context, weekly_rebalance, time="14:50")
+    run_daily(context, rebalance_buy, time="14:54")
     if is_trade():
-        run_daily(context, rebalance_buy, time="14:54")
         run_daily(context, park_cash_in_repo, time="14:57")
 
 
