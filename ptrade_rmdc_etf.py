@@ -2,22 +2,41 @@
 """
 RMDC: Residual-Momentum De-Crowding ETF rotation for 国金 PTrade.
 
-From-scratch 2026 design. Not a clone of regime_etf_rotation.py.
+Design (2026 rewrite, not regime_etf_rotation.py):
+- Residual momentum: ETF log returns regressed on 1 + r(510300)
+  + (r(510500) - r(510300)); fit 120d, score = sum of the last 60
+  residuals (last 5 days skipped) divided by their std.
+- Huatai-style 0-4 crowding score on OHLCV; >=3 blocks new opens.
+- State machine from the GROWTH sleeve: breadth (pct of 20d ret > 0)
+  and median 20d annualised vol. offense B>=0.60 & vol<=0.30,
+  defense B<0.40 or vol>0.40, lockdown 5 sessions after a crash
+  (510300 down >=6% in 1d or >=8% in 3d).
+- Greedy correlation filter at 0.65; if mean pairwise corr of the
+  top-5 growth names >0.75, growth sleeve is halved and capped at 1.
+- Absolute momentum gate: 63d return > 0 and > 511010 63d return.
+- Inverse-vol weights, 12% portfolio vol target, ~25% diversifier
+  floor unless every diversifier has a negative 63d return.
+- Weekly rebalance 14:50 (sell leg), buy leg ALWAYS at 14:54,
+  crash / 20% trailing-stop overlay at 14:45 plus 09:35/13:05
+  checks in handle_data, reverse repo at 14:57 in live only.
 
-- Residual momentum vs 沪深300 + 中证500 size spread (beta/size stripped)
-- Huatai-style 0-4 crowding veto on OHLCV
-- Breadth + median-vol state machine (not 510300 vs MA60)
-- Correlation filter so 半导体/创业板/科创50 cannot be one trade
-- Growth vs diversifier sleeves, inverse-vol weights, 12% vol target
-- Weekly rebalance, daily crash/trailing-stop overlay
-- Python 3.11 on 国金; still avoid f-strings for SimTradeLab/paste safety
-
-Paste this whole file into 国金 PTrade. Use minute mode to keep 14:45/14:50/14:54.
+PTrade notes:
+- Paste this whole file into 国金 PTrade; run in minute mode so the
+  14:45/14:50/14:54/14:57 schedule fires.
+- 国金 broker adapter is 'auto', NOT 'guosheng' (e.g. SimTradeLab
+  backtest config: broker='auto').
+- Python 3.11 with numpy. No pandas required, no f-strings, no
+  os/sys/network, no get_snapshot in the core path.
+- get_history one symbol at a time with fq='pre', include=False.
+- order/order_target only (never order_target_value); sell before
+  buy; buys capped by available cash; 100-share lots except 51188*.
 """
 import math
+
 import numpy as np
 
 
+# QDII (513*) live only in DIVERSIFIER, never in GROWTH.
 GROWTH = [
     "510300.SS",
     "510500.SS",
@@ -56,6 +75,7 @@ STATE_BAL = "balanced"
 STATE_OFF = "defense"
 STATE_LOCK = "lockdown"
 
+# (growth, diversifier, cash) sleeve weights per state.
 SLEEVE_WEIGHTS = {
     STATE_ON: (0.70, 0.25, 0.05),
     STATE_BAL: (0.40, 0.45, 0.15),
@@ -64,6 +84,9 @@ SLEEVE_WEIGHTS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Pure quant functions (frozen public API; no PTrade calls in here)
+# ---------------------------------------------------------------------------
 def log_returns(closes):
     closes = np.asarray(closes, dtype=float)
     closes = closes[np.isfinite(closes)]
@@ -92,6 +115,12 @@ def _corr(a, b):
 
 def residual_momentum(etf_closes, market_closes, size_closes=None,
                       fit_window=120, score_window=60, skip=5):
+    """Sum of recent regression residuals over their std.
+
+    y ~ 1 + r_mkt + (r_size - r_mkt), fit on `fit_window` daily log
+    returns ending `skip` days ago; score over the last
+    `score_window` residuals of the fit.
+    """
     y = log_returns(etf_closes)
     mkt = log_returns(market_closes)
     n = min(len(y), len(mkt))
@@ -102,9 +131,8 @@ def residual_momentum(etf_closes, market_closes, size_closes=None,
     cols = [np.ones(n), mkt]
     if size_closes is not None and len(size_closes) > 2:
         size = log_returns(size_closes)
-        size = size[-n:]
-        if len(size) == n:
-            cols.append(size - mkt)
+        if len(size) >= n:
+            cols.append(size[-n:] - mkt)
     X = np.column_stack(cols)
     end = n - int(skip)
     start = max(0, end - int(fit_window))
@@ -115,13 +143,16 @@ def residual_momentum(etf_closes, market_closes, size_closes=None,
     beta, _, _, _ = np.linalg.lstsq(xx, yy, rcond=None)
     resid = yy - xx.dot(beta)
     tail = resid[-int(score_window):]
-    sd = float(np.std(tail, ddof=1)) if len(tail) > 2 else 0.0
+    if len(tail) < 3:
+        return 0.0
+    sd = float(np.std(tail, ddof=1))
     if sd < 1e-12:
         return 0.0
     return float(np.sum(tail) / sd)
 
 
 def trend_quality(closes, lookback=120):
+    """Close relative to the rolling peak; 1.0 = at the high."""
     closes = np.asarray(closes, dtype=float)
     if len(closes) < 5:
         return 0.0
@@ -152,24 +183,26 @@ def realized_vol(closes, days=20):
 
 
 def crowding_points(closes, highs, lows, volumes, amounts=None):
+    """0-4 crowding score. >=3 means the name cannot be opened.
+
+    +1 vol20/vol60 > 2, +1 close/MA60 - 1 > 0.15,
+    +1 20d corr(close, volume) < 0.10,
+    +1 mean 20d (high-low)/prev_close > 0.04.
+    """
     closes = np.asarray(closes, dtype=float)
     highs = np.asarray(highs, dtype=float)
     lows = np.asarray(lows, dtype=float)
     volumes = np.asarray(volumes, dtype=float)
     n = min(len(closes), len(highs), len(lows), len(volumes))
-    if n < 60:
+    if n < 61:
         return 0
     closes = closes[-n:]
     highs = highs[-n:]
     lows = lows[-n:]
     volumes = volumes[-n:]
-    if amounts is None:
-        amounts = closes * volumes
-    else:
-        amounts = np.asarray(amounts, dtype=float)[-n:]
     points = 0
     v20 = float(np.mean(volumes[-20:]))
-    v60 = float(np.median(volumes[-60:]))
+    v60 = float(np.mean(volumes[-60:]))
     if v60 > 0 and v20 / v60 > 2.0:
         points += 1
     ma60 = float(np.mean(closes[-60:]))
@@ -195,13 +228,10 @@ def classify_state(breadth, med_vol, lockdown):
 
 
 def growth_breadth(ret20_map, growth_codes):
-    vals = []
-    for code in growth_codes:
-        if code in ret20_map:
-            vals.append(ret20_map[code])
+    vals = [ret20_map[c] for c in growth_codes if c in ret20_map]
     if not vals:
         return 0.0
-    return float(sum(1 for x in vals if x > 0) / float(len(vals)))
+    return float(sum(1 for x in vals if x > 0)) / float(len(vals))
 
 
 def median_vol(vol_map, codes):
@@ -216,7 +246,7 @@ def mean_pairwise_corr(ret_map, codes):
     if len(arrays) < 2:
         return 0.0
     n = min(len(a) for a in arrays)
-    arrays = [a[-n:] for a in arrays]
+    arrays = [np.asarray(a, dtype=float)[-n:] for a in arrays]
     corrs = []
     for i in range(len(arrays)):
         for j in range(i + 1, len(arrays)):
@@ -229,6 +259,7 @@ def mean_pairwise_corr(ret_map, codes):
 
 
 def filter_correlated(ranked, ret60_map, threshold=0.65):
+    """Greedy: keep a name only if corr with every kept name <= threshold."""
     selected = []
     for code in ranked:
         ok = True
@@ -267,6 +298,7 @@ def inverse_vol_weights(codes, vol_map, cap=0.40):
 
 
 def scale_to_vol_target(weights, vol_map, target=0.12):
+    """Scale weights down (never up) toward the vol target."""
     var = 0.0
     for code, weight in weights.items():
         vol = float(vol_map.get(code, 0.20))
@@ -296,84 +328,84 @@ def trailing_stop_hit(close_px, high_water, pct=0.20):
     return float(close_px) <= float(high_water) * (1.0 - pct)
 
 
-def pick_sleeve(ranked, count):
-    return list(ranked[:count])
-
-
 def build_targets(state, growth_ranked, div_ranked, vol_map,
                   growth_corr_high, div_all_negative, vol_target=0.12):
+    """Sleeve weights -> per-ETF weights (cash is the remainder)."""
     g_w, d_w, c_w = SLEEVE_WEIGHTS[state]
-    if growth_corr_high:
-        g_w = g_w * 0.5
-        d_w = min(0.80, d_w + 0.15)
-        c_w = max(0.0, 1.0 - g_w - d_w)
-        growth_ranked = growth_ranked[:1]
+    growth_ranked = list(growth_ranked or [])
+    div_ranked = list(div_ranked or [])
     if state in (STATE_OFF, STATE_LOCK):
         growth_ranked = []
         g_w = 0.0
-        d_w, c_w = SLEEVE_WEIGHTS[state][1], SLEEVE_WEIGHTS[state][2]
-    if not growth_ranked:
+    if growth_corr_high and g_w > 0:
+        freed = g_w * 0.5
+        g_w -= freed
+        d_w = min(0.80, d_w + freed)
+        c_w = max(0.0, 1.0 - g_w - d_w)
+        growth_ranked = growth_ranked[:1]
+    if not growth_ranked and g_w > 0:
+        d_w = min(0.80, d_w + g_w * 0.5)
         g_w = 0.0
-        d_w = d_w + SLEEVE_WEIGHTS[state][0] * 0.5
         c_w = max(0.0, 1.0 - d_w)
     if div_all_negative:
         d_w = 0.0
-        c_w = 1.0 - g_w
+        c_w = max(0.0, 1.0 - g_w)
     elif d_w < 0.25 and g_w > 0:
-        extra = 0.25 - d_w
-        take = min(extra, g_w)
+        take = min(0.25 - d_w, g_w)
         g_w -= take
         d_w += take
 
-    g_pick = pick_sleeve(growth_ranked, 2 if g_w >= 0.50 else (1 if g_w > 0 else 0))
+    g_n = 2 if g_w >= 0.50 else (1 if g_w > 0 else 0)
     d_n = 3 if d_w >= 0.60 else (2 if d_w > 0 else 0)
-    d_pick = pick_sleeve(div_ranked, d_n)
+    g_pick = growth_ranked[:g_n]
+    d_pick = div_ranked[:d_n]
 
     weights = {}
     if g_pick and g_w > 0:
-        inner = inverse_vol_weights(g_pick, vol_map)
-        for code, weight in inner.items():
+        for code, weight in inverse_vol_weights(g_pick, vol_map).items():
             weights[code] = weight * g_w
     if d_pick and d_w > 0:
-        inner = inverse_vol_weights(d_pick, vol_map)
-        for code, weight in inner.items():
+        for code, weight in inverse_vol_weights(d_pick, vol_map).items():
             weights[code] = weights.get(code, 0.0) + weight * d_w
     weights, _scale = scale_to_vol_target(weights, vol_map, target=vol_target)
     return weights
 
 
 def apply_hysteresis(current, proposed, score_map, gap=1.20):
+    """Keep incumbents unless a challenger beats them by `gap`."""
     current = list(current or [])
     proposed = list(proposed or [])
     if not current:
         return proposed
+    limit = max(len(proposed), 1)
     kept = []
     for code in current:
         if code in proposed:
-            kept.append(code)
+            if code not in kept:
+                kept.append(code)
             continue
-        best_new = None
-        best_score = -1e9
+        best = None
+        best_score = -1e18
         for cand in proposed:
             if cand in current or cand in kept:
                 continue
             sc = float(score_map.get(cand, 0.0))
             if sc > best_score:
                 best_score = sc
-                best_new = cand
+                best = cand
         old_score = float(score_map.get(code, 0.0))
-        if best_new is not None and best_score > old_score * gap:
-            kept.append(best_new)
+        if best is not None and best_score > old_score * gap:
+            kept.append(best)
         else:
             kept.append(code)
     for code in proposed:
-        if code not in kept and len(kept) < max(len(proposed), len(current)):
+        if code not in kept and len(kept) < limit:
             kept.append(code)
     ordered = [c for c in proposed if c in kept]
-    for c in kept:
-        if c not in ordered:
-            ordered.append(c)
-    return ordered[: max(len(proposed), 1)]
+    for code in kept:
+        if code not in ordered:
+            ordered.append(code)
+    return ordered[:limit]
 
 
 def lot_shares(value, price, lot=100):
@@ -394,6 +426,7 @@ def initialize(context):
     g.size = "510500.SS"
     g.bond = "511010.SS"
     g.cash_etf = "511880.SS"
+    g.repo_code = "204001.SS"
     g.hist_count = 260
     g.corr_limit = 0.65
     g.corr_cluster = 0.75
@@ -402,7 +435,8 @@ def initialize(context):
     g.trail_pct = 0.20
     g.lockdown_days = 5
     g.cash_reserve = 0.02
-    g.reverse_repo = ["131810.SZ", "204001.SS"]
+    g.premium_limit = 0.03
+    g.min_weight = 0.04
     g.last_rebalance_week = None
     g.lockdown_left = 0
     g.last_target = {}
@@ -415,23 +449,28 @@ def initialize(context):
     set_universe(g.etf_pool + [g.cash_etf])
     set_benchmark("000300.SS")
     if not is_trade():
-        set_commission(commission_ratio=0.0003, min_commission=5)
-        set_slippage(slippage=0.001)
-        set_limit_mode(limit_mode="UNLIMITED")
+        try:
+            set_commission(commission_ratio=0.0003, min_commission=5)
+            set_slippage(slippage=0.001)
+            set_limit_mode(limit_mode="UNLIMITED")
+        except Exception:
+            pass
 
     run_daily(context, crash_overlay, time="14:45")
     run_daily(context, weekly_rebalance, time="14:50")
+    # ALWAYS register the buy leg, in backtest and live alike.
     run_daily(context, rebalance_buy, time="14:54")
     if is_trade():
         run_daily(context, park_cash_in_repo, time="14:57")
 
 
 def before_trading_start(context, data):
+    # Drop stale order bookkeeping from the previous session.
     g.pending_orders = {}
 
 
 def handle_data(context, data):
-    current_dt = getattr(context.blotter, "current_dt", None)
+    current_dt = _current_dt(context)
     if current_dt is None:
         return
     hhmm = current_dt.strftime("%H:%M")
@@ -440,13 +479,141 @@ def handle_data(context, data):
 
 
 def after_trading_end(context, data):
-    log.info("日终 状态=%s 资产=%.2f 现金=%.2f 持仓=%s 目标=%s" % (
+    if g.lockdown_left > 0:
+        g.lockdown_left -= 1
+    log.info("日终 状态=%s 锁仓剩余=%d 资产=%.2f 现金=%.2f 持仓=%s 目标=%s" % (
         str(g.last_state),
+        int(g.lockdown_left),
         context.portfolio.portfolio_value,
         context.portfolio.cash,
         str(_held_etfs(context)),
         str(sorted(g.last_target.keys())),
     ))
+
+
+def weekly_rebalance(context, data=None):
+    today = _current_dt(context)
+    if today is not None and g.last_rebalance_week == _week_key(today):
+        return
+    hist_map = _load_histories(g.etf_pool, g.hist_count)
+    if len(hist_map) < 6:
+        log.info("历史行情不足，本次不调仓")
+        return
+    target = _compute_targets(hist_map, _held_etfs(context))
+    g.last_target = dict(target)
+    g.pending_target = dict(target)
+    if today is not None:
+        g.last_rebalance_week = _week_key(today)
+    _align_positions(context, target)
+
+
+def crash_overlay(context, data=None):
+    """Daily overlay: market crash + 20% trailing stop on growth holds."""
+    held = _held_etfs(context)
+    if not held:
+        return
+    growth_held = [c for c in held if c in g.growth]
+    hist_map = _load_histories(list(dict.fromkeys(growth_held + [g.market])), 30)
+    flatten = False
+    mkt = hist_map.get(g.market)
+    if mkt is not None and crash_triggered(mkt["close"], 0.06, 0.08):
+        flatten = True
+    for code in growth_held:
+        bars = hist_map.get(code)
+        if bars is None or len(bars["close"]) == 0:
+            continue
+        px = float(bars["close"][-1])
+        water = g.high_water.get(code)
+        if water is None or px > water:
+            g.high_water[code] = px
+        elif trailing_stop_hit(px, water, g.trail_pct):
+            flatten = True
+        if crash_triggered(bars["close"], 0.08, 0.08):
+            flatten = True
+    if not flatten:
+        return
+    g.lockdown_left = g.lockdown_days
+    g.last_state = STATE_LOCK
+    target = {}
+    div_hist = _load_histories(
+        list(dict.fromkeys(g.diversifier + [g.market, g.size, g.bond])),
+        g.hist_count,
+    )
+    if div_hist:
+        snap = _score_universe(div_hist)
+        ranked = _eligible(g.diversifier, snap, held, require_trend=False)
+        if ranked:
+            target[ranked[0]] = 0.60
+    g.last_target = dict(target)
+    g.pending_target = dict(target)
+    log.info("崩盘/回撤 overlay 触发 lockdown 目标=%s" % str(target))
+    _align_positions(context, target)
+
+
+def rebalance_buy(context, data=None):
+    """14:54 buy leg; runs every day so 14:50 sells settle into buys."""
+    if is_trade() and g.pending_orders:
+        log.info("仍有未完成委托，推迟买入")
+        return
+    target = dict(g.pending_target or g.last_target or {})
+    if not target:
+        return
+    _align_positions(context, target)
+
+
+def park_cash_in_repo(context, data=None):
+    """Live only: lend idle cash via 1-day reverse repo (sell direction)."""
+    if not is_trade():
+        return
+    if g.pending_orders:
+        return
+    cash = float(context.portfolio.cash)
+    if cash < 1000:
+        return
+    amount = int(math.floor(cash / 1000.0) * 10)
+    if amount < 10:
+        return
+    order_id = order(g.repo_code, -amount)
+    _remember_order(g.repo_code, order_id)
+
+
+def on_order_response(context, order_list):
+    if not order_list:
+        return
+    for order_info in order_list:
+        status = str(_field(order_info, "status", ""))
+        sid = _normalize_security_code(
+            _field(order_info, "stock_code")
+            or _field(order_info, "sid")
+            or _field(order_info, "symbol")
+        )
+        if status in ("5", "6", "8", "9"):
+            _clear_pending_order(sid)
+        if status == "9":
+            log.info("废单 %s 原因=%s" % (
+                str(sid), str(_field(order_info, "error_info"))))
+
+
+def on_trade_response(context, trade_list):
+    if not trade_list:
+        return
+    for trade_info in trade_list:
+        if str(_field(trade_info, "status", "")) == "8":
+            _clear_pending_order(_field(trade_info, "stock_code"))
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+def _field(obj, name, default=None):
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    try:
+        return getattr(obj, name, default)
+    except Exception:
+        return default
 
 
 def _normalize_security_code(code):
@@ -475,30 +642,10 @@ def _clear_pending_order(code):
 
 
 def _has_pending_order(code):
+    # Backtest fills are synchronous; only gate on pendings in live.
+    if not is_trade():
+        return False
     return _normalize_security_code(code) in g.pending_orders
-
-
-def on_order_response(context, order_list):
-    if not order_list:
-        return
-    for order_info in order_list:
-        status = str(order_info.get("status", ""))
-        sid = _normalize_security_code(
-            order_info.get("stock_code") or order_info.get("sid") or order_info.get("symbol")
-        )
-        if status in ("5", "6", "8", "9"):
-            _clear_pending_order(sid)
-        if status == "9":
-            log.info("废单 %s 原因=%s" % (str(sid), str(order_info.get("error_info"))))
-
-
-def on_trade_response(context, trade_list):
-    if not trade_list:
-        return
-    for trade_info in trade_list:
-        sid = _normalize_security_code(trade_info.get("stock_code"))
-        if str(trade_info.get("status", "")) == "8":
-            _clear_pending_order(sid)
 
 
 def _series(df, field):
@@ -515,6 +662,7 @@ def _series(df, field):
 
 
 def _load_one(code, count):
+    """get_history for a single symbol, fq='pre', include=False."""
     try:
         df = get_history(
             count,
@@ -525,16 +673,20 @@ def _load_one(code, count):
             include=False,
         )
     except TypeError:
-        df = get_history(count, "1d", ["open", "high", "low", "close", "volume"], code)
+        try:
+            df = get_history(count, "1d",
+                             ["open", "high", "low", "close", "volume"], code)
+        except Exception:
+            return None
     except Exception:
         return None
     if df is None or len(df) == 0:
         return None
     bars = {
-        "close": _series(df, "close"),
         "open": _series(df, "open"),
         "high": _series(df, "high"),
         "low": _series(df, "low"),
+        "close": _series(df, "close"),
         "volume": _series(df, "volume"),
         "money": _series(df, "money"),
     }
@@ -555,7 +707,11 @@ def _load_histories(codes, count):
 
 
 def _current_dt(context):
-    return getattr(context, "current_dt", None) or getattr(context.blotter, "current_dt", None)
+    dt = getattr(context, "current_dt", None)
+    if dt is not None:
+        return dt
+    blotter = getattr(context, "blotter", None)
+    return getattr(blotter, "current_dt", None)
 
 
 def _week_key(dt):
@@ -568,18 +724,34 @@ def _week_key(dt):
 
 def _held_etfs(context):
     held = []
-    positions = get_positions()
+    try:
+        positions = get_positions()
+    except Exception:
+        positions = None
     if not positions:
         return held
-    items = positions.items() if hasattr(positions, "items") else []
-    if not items and isinstance(positions, (list, tuple)):
-        items = [(getattr(p, "sid", None) or getattr(p, "security", None), p) for p in positions]
+    if hasattr(positions, "items"):
+        items = list(positions.items())
+    elif isinstance(positions, (list, tuple)):
+        items = [(_field(p, "sid") or _field(p, "security"), p)
+                 for p in positions]
+    else:
+        items = []
+    tradable = set(g.etf_pool + [g.cash_etf])
     for code, pos in items:
-        amount = int(getattr(pos, "amount", 0) or 0)
-        sid = _normalize_security_code(code or getattr(pos, "sid", None))
-        if sid and amount > 0 and sid in g.etf_pool + [g.cash_etf]:
+        sid = _normalize_security_code(code or _field(pos, "sid"))
+        amount = int(_field(pos, "amount", 0) or 0)
+        if sid and amount > 0 and sid in tradable:
             held.append(sid)
     return held
+
+
+def _position_amount(code):
+    try:
+        pos = get_position(code)
+    except Exception:
+        pos = None
+    return int(_field(pos, "amount", 0) or 0)
 
 
 def _current_price(code):
@@ -590,6 +762,7 @@ def _current_price(code):
 
 
 def _etf_premium_too_high(code, price):
+    """QDII (513*) premium veto via get_etf_info; fail-open."""
     if not is_trade():
         return False
     if not str(code).startswith("513"):
@@ -600,14 +773,33 @@ def _etf_premium_too_high(code, price):
         return False
     if not info:
         return False
-    iopv = info.get("iopv") or info.get("IOPV") or info.get("nav")
+    iopv = (_field(info, "iopv") or _field(info, "IOPV")
+            or _field(info, "nav") or _field(info, "unit_nav"))
     try:
         iopv = float(iopv)
     except Exception:
         return False
     if iopv <= 0 or price is None:
         return False
-    return (price / iopv - 1.0) >= 0.03
+    return (price / iopv - 1.0) >= g.premium_limit
+
+
+def _limit_blocked(code):
+    """check_limit veto, always fail-open."""
+    try:
+        res = check_limit(code)
+    except Exception:
+        return False
+    try:
+        if isinstance(res, dict):
+            return int(res.get(code, 0) or 0) != 0
+    except Exception:
+        return False
+    return False
+
+
+def _lot_for(code):
+    return 1 if str(code).startswith("51188") else 100
 
 
 def _score_universe(hist_map):
@@ -616,19 +808,17 @@ def _score_universe(hist_map):
     bond = hist_map.get(g.bond)
     mkt_c = None if market is None else market["close"]
     size_c = None if size is None else size["close"]
-    bond_ret = 0.0
-    if bond is not None:
-        bond_ret = period_return(bond["close"], 63)
+    bond_ret = 0.0 if bond is None else period_return(bond["close"], 63)
     scores = {}
+    tq_map = {}
     ret20 = {}
     ret63 = {}
     vols = {}
     ret60_map = {}
     crowd = {}
-    tq_map = {}
     for code, bars in hist_map.items():
         close = bars["close"]
-        if len(close) < 70 or mkt_c is None:
+        if mkt_c is None or len(close) < 70:
             continue
         scores[code] = residual_momentum(close, mkt_c, size_c)
         tq_map[code] = trend_quality(close)
@@ -637,8 +827,7 @@ def _score_universe(hist_map):
         vols[code] = realized_vol(close, 20)
         ret60_map[code] = log_returns(close)[-60:]
         crowd[code] = crowding_points(
-            close, bars["high"], bars["low"], bars["volume"], bars.get("money")
-        )
+            close, bars["high"], bars["low"], bars["volume"], bars.get("money"))
     return {
         "scores": scores,
         "tq": tq_map,
@@ -652,21 +841,30 @@ def _score_universe(hist_map):
     }
 
 
-def _eligible(codes, snap, require_trend=True):
+def _eligible(codes, snap, held, require_trend):
+    """Rank by residual momentum after veto gates.
+
+    Crowding >=3 blocks new opens only; incumbents may stay.
+    Growth additionally needs trend quality and absolute momentum
+    above the bond return; diversifiers just need a positive 63d.
+    """
+    held = set(held or [])
     ranked = []
     for code in codes:
         score = snap["scores"].get(code)
         if score is None:
             continue
-        if snap["crowd"].get(code, 0) >= 3:
+        if snap["crowd"].get(code, 0) >= 3 and code not in held:
             continue
-        if require_trend and snap["tq"].get(code, 0) < 0.90:
+        ret63 = snap["ret63"].get(code, 0.0)
+        if ret63 <= 0:
             continue
-        if snap["ret63"].get(code, 0) <= 0:
-            continue
-        if snap["ret63"].get(code, 0) < snap["bond_ret"]:
-            continue
-        ranked.append((code, score * max(snap["tq"].get(code, 0), 0.01)))
+        if require_trend:
+            if snap["tq"].get(code, 0.0) < 0.90:
+                continue
+            if ret63 <= snap["bond_ret"]:
+                continue
+        ranked.append((code, score))
     ranked.sort(key=lambda x: x[1], reverse=True)
     return [c for c, _ in ranked]
 
@@ -676,192 +874,96 @@ def _compute_targets(hist_map, current_held):
     g.last_scores = dict(snap["scores"])
     breadth = growth_breadth(snap["ret20"], g.growth)
     med_vol = median_vol(snap["vols"], g.growth)
-    lockdown = g.lockdown_left > 0
-    if snap["mkt_close"] is not None and crash_triggered(snap["mkt_close"], 0.06, 0.08):
-        lockdown = True
+    if snap["mkt_close"] is not None and crash_triggered(
+            snap["mkt_close"], 0.06, 0.08):
         g.lockdown_left = max(g.lockdown_left, g.lockdown_days)
-    state = classify_state(breadth, med_vol, lockdown)
+    state = classify_state(breadth, med_vol, g.lockdown_left > 0)
     g.last_state = state
 
-    growth_ranked = _eligible(g.growth, snap, require_trend=True)
-    div_ranked = _eligible(g.diversifier, snap, require_trend=False)
-    growth_ranked = filter_correlated(growth_ranked, snap["ret60"], g.corr_limit)
-    div_ranked = filter_correlated(div_ranked, snap["ret60"], g.corr_limit)
+    growth_all = _eligible(g.growth, snap, current_held, require_trend=True)
+    div_all = _eligible(g.diversifier, snap, current_held, require_trend=False)
+    # Cluster check on the raw top-5 before the pairwise filter thins it.
+    cluster = mean_pairwise_corr(snap["ret60"], growth_all[:5]) > g.corr_cluster
+    growth_ranked = filter_correlated(growth_all, snap["ret60"], g.corr_limit)
+    div_ranked = filter_correlated(div_all, snap["ret60"], g.corr_limit)
 
-    top5 = growth_ranked[:5]
-    cluster = mean_pairwise_corr(snap["ret60"], top5) > g.corr_cluster
     div_all_neg = True
     for code in g.diversifier:
-        if snap["ret63"].get(code, -1) > 0:
+        if snap["ret63"].get(code, -1.0) > 0:
             div_all_neg = False
             break
 
     raw_weights = build_targets(
         state, growth_ranked, div_ranked, snap["vols"],
-        cluster, div_all_neg, g.vol_target,
-    )
-    proposed = [c for c, w in sorted(raw_weights.items(), key=lambda x: -x[1]) if w >= 0.04]
+        cluster, div_all_neg, g.vol_target)
+    proposed = [c for c, w in sorted(raw_weights.items(), key=lambda kv: -kv[1])
+                if w >= g.min_weight]
     held_keep = [c for c in current_held if c in raw_weights]
     stable = apply_hysteresis(held_keep, proposed, snap["scores"], g.hysteresis)
     weights = {c: raw_weights[c] for c in stable if c in raw_weights}
-    if weights:
-        total = sum(weights.values())
-        if total > 0:
-            weights = {c: w / total * sum(raw_weights.get(x, 0) for x in weights) for c, w in weights.items()}
     log.info("state=%s breadth=%.2f medvol=%.2f cluster=%s growth=%s div=%s target=%s" % (
         state, breadth, med_vol, str(cluster), str(growth_ranked[:4]),
-        str(div_ranked[:4]), str(weights),
-    ))
+        str(div_ranked[:4]), str(weights)))
     return weights
 
 
-def weekly_rebalance(context, data=None):
-    today = _current_dt(context)
-    if today is not None:
-        week = _week_key(today)
-        if g.last_rebalance_week == week:
-            return
-    hist_map = _load_histories(g.etf_pool, g.hist_count)
-    if len(hist_map) < 6:
-        log.info("历史行情不足，本次不调仓")
-        return
-    target = _compute_targets(hist_map, _held_etfs(context))
-    g.last_target = dict(target)
-    g.pending_target = dict(target)
-    if today is not None:
-        g.last_rebalance_week = _week_key(today)
-    if g.lockdown_left > 0:
-        g.lockdown_left -= 1
-    _align_positions(context, target)
-
-
-def crash_overlay(context, data=None):
-    held = _held_etfs(context)
-    if not held:
-        return
-    hist_map = _load_histories(held + [g.market], 30)
-    flatten = False
-    for code in held:
-        if code in g.diversifier or code == g.cash_etf:
-            continue
-        bars = hist_map.get(code)
-        px = None if bars is None or len(bars["close"]) == 0 else float(bars["close"][-1])
-        if bars is not None and crash_triggered(bars["close"], 0.08, 0.08):
-            flatten = True
-        water = g.high_water.get(code)
-        if px is not None:
-            if water is None or px > water:
-                g.high_water[code] = px
-            elif trailing_stop_hit(px, water, g.trail_pct):
-                flatten = True
-    mkt = hist_map.get(g.market)
-    if mkt is not None and crash_triggered(mkt["close"], 0.06, 0.08):
-        flatten = True
-    if not flatten:
-        return
-    g.lockdown_left = g.lockdown_days
-    g.last_state = STATE_LOCK
-    target = {}
-    hist_div = _load_histories(g.diversifier, g.hist_count)
-    snap = _score_universe(hist_div) if hist_div else None
-    if snap:
-        ranked = _eligible(g.diversifier, snap, require_trend=False)
-        if ranked:
-            target[ranked[0]] = 0.60
-    g.last_target = dict(target)
-    g.pending_target = dict(target)
-    log.info("crash/trailing overlay lockdown target=%s" % str(target))
-    _align_positions(context, target)
-
-
-def rebalance_buy(context, data=None):
-    if g.pending_orders:
-        log.info("仍有未完成委托，推迟买入")
-        return
-    _align_positions(context, dict(g.pending_target or g.last_target or {}))
-
-
-def park_cash_in_repo(context, data=None):
-    if not is_trade():
-        return
-    if g.pending_orders:
-        return
-    cash = float(context.portfolio.cash)
-    if cash < 10000:
-        return
-    code = "204001.SS"
-    amount = int(math.floor(cash / 1000.0) * 10)
-    if amount >= 10:
-        order_id = order(code, amount)
-        _remember_order(code, order_id)
-
-
 def _align_positions(context, target_weights):
-    if target_weights is None:
-        target_weights = {}
-    target_codes = [c for c, w in target_weights.items() if w > 0.01]
+    """Sell leg first; buy leg only when no fresh sells are in flight."""
+    targets = {c: w for c, w in (target_weights or {}).items() if w > 0.01}
     held = _held_etfs(context)
-    sell_submitted = False
+    sold = False
     for code in held:
-        if code not in target_codes and not _has_pending_order(code):
-            order_id = order_target(code, 0)
-            if order_id is not None:
-                sell_submitted = True
-                _remember_order(code, order_id)
-                g.high_water.pop(code, None)
-                log.info("卖出非目标 %s" % code)
-
-    if not target_codes:
+        if code in targets or _has_pending_order(code):
+            continue
+        order_id = order_target(code, 0)
+        if order_id is not None:
+            sold = True
+            _remember_order(code, order_id)
+            g.high_water.pop(code, None)
+            log.info("卖出非目标 %s" % code)
+    if not targets:
         return
-    if sell_submitted:
-        log.info("本轮已提交卖单，等待资金同步后再买入")
+    if sold and is_trade():
+        log.info("本轮已提交卖单，等待资金同步后由 14:54 买入")
         return
 
-    value = float(context.portfolio.portfolio_value) * (1.0 - g.cash_reserve)
-    available_cash = float(context.portfolio.cash) * (1.0 - g.cash_reserve)
-    for code in target_codes:
+    total_value = float(context.portfolio.portfolio_value) * (1.0 - g.cash_reserve)
+    cash_left = float(context.portfolio.cash) * (1.0 - g.cash_reserve)
+    for code in sorted(targets, key=lambda c: -targets[c]):
         if _has_pending_order(code):
             continue
         price = _current_price(code)
         if price is None or price <= 0:
             continue
-        if _etf_premium_too_high(code, price):
-            log.info("溢价过高，跳过 %s" % code)
-            continue
-        try:
-            check_limit(code)
-        except Exception:
-            pass
-        weight = float(target_weights.get(code, 0.0))
-        target_value = value * weight
-        pos = get_position(code)
-        current_amount = 0 if pos is None else int(getattr(pos, "amount", 0) or 0)
-        current_value = current_amount * price
-        diff = target_value - current_value
-        lot = 1 if str(code).startswith("51188") else 100
+        lot = _lot_for(code)
+        current_amount = _position_amount(code)
+        diff = total_value * targets[code] - current_amount * price
         if diff < 0:
-            shares = lot_shares(-diff, price, lot)
-            sell_amount = min(shares, current_amount)
-            if lot > 1:
-                sell_amount = int(sell_amount / lot) * lot
-            if sell_amount >= lot:
-                order_id = order(code, -sell_amount)
+            shares = min(lot_shares(-diff, price, lot), current_amount)
+            shares = int(shares / lot) * lot
+            if shares >= lot:
+                order_id = order(code, -shares)
                 if order_id is not None:
                     _remember_order(code, order_id)
-                    log.info("减仓 %s 数量=%d" % (code, sell_amount))
+                    log.info("减仓 %s 数量=%d" % (code, shares))
             continue
         if diff < price * lot:
             continue
-        desired = lot_shares(diff, price, lot)
-        cash_shares = lot_shares(available_cash, price, lot)
-        shares = min(desired, cash_shares)
+        if _etf_premium_too_high(code, price):
+            log.info("溢价过高，跳过 %s" % code)
+            continue
+        if _limit_blocked(code):
+            log.info("涨跌停限制，跳过 %s" % code)
+            continue
+        shares = min(lot_shares(diff, price, lot),
+                     lot_shares(cash_left, price, lot))
         if shares < lot:
             continue
         order_id = order(code, shares)
         if order_id is not None:
             _remember_order(code, order_id)
-            available_cash -= shares * price
+            cash_left -= shares * price
             water = g.high_water.get(code)
             if water is None or price > water:
                 g.high_water[code] = price
-            log.info("买入 %s 数量=%d 权重=%.2f" % (code, shares, weight))
+            log.info("买入 %s 数量=%d 权重=%.2f" % (code, shares, targets[code]))
