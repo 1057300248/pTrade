@@ -21,7 +21,14 @@ python -m pytest tests/test_regime_etf_rotation.py -q
 python research/backtest_regime_etf.py
 ```
 
-更完整的 PTrade API 本地回测可用同工作区的 SimTradeLab，注意以它的支持矩阵为准。
+用同工作区 SimTradeLab 做 PTrade 之前的第一道过滤（国金没有独立 broker 口径，用 `auto`）：
+
+```bash
+python research/prepare_simtradelab_data.py
+PYTHONPATH=../SimTradeLab/src python research/run_simtradelab_backtest.py
+```
+
+SimTradeLab 不能替代国金 PTrade 的分钟回测和仿真。不要为此去开 QMT，API 不兼容。
 
 ## 旧策略怎么用
 

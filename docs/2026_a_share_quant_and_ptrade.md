@@ -103,9 +103,16 @@ PTrade 是恒生量化终端，由券商部署。能力边界：
 ## 6. PTrade 从研究到实盘
 
 1. 券商开通 PTrade，完成程序化交易报备（先报备后交易）。
-2. 确认该券商 Python 版本；若是 3.5，本仓库策略已避免 f-string。
-3. 用 SimTradeLab 或 `research/backtest_regime_etf.py` 做本地研究。
-4. 在 PTrade **回测** 用日线/分钟跑 2019 至今，佣金按真实费率，滑点不要设 0。
+2. **国金 PTrade 的 Python 是 3.11**。SimTradeLab 没有 `guojin` 口径，本地前置回测用 `broker_profile='auto'`。不要填 `guosheng`（那是国盛，会误开 Python 3.5 检查）。
+3. 用 SimTradeLab 做第一道过滤（日线）：
+
+```bash
+python research/prepare_simtradelab_data.py
+PYTHONPATH=../SimTradeLab/src python research/run_simtradelab_backtest.py
+```
+
+这只能验证生命周期、T+1、佣金、信号和语法。`get_snapshot`、废单、部分成交，以及 14:50/14:54 的分钟时点，日线模式都会被压成 15:00。Cloud Desktop 打不开国金终端。不要为了回测去开 QMT：API 不同，PTrade 策略不能直接贴过去。
+4. 在国金 PTrade 用分钟回测 + 仿真做第二道验证。佣金按真实费率，滑点不要设 0。区间至少覆盖 2024-02 和 2026-07。
 5. **仿真** 至少完整运行 2–4 周，核对废单、溢价、停牌、T+1。
 6. 小资金实盘，开启 `on_order_response` / `on_trade_response`。
 7. 策略逻辑、软件名称、最高申报速率、单日申报上限按实际填写报备；本策略按日频调仓设计，申报速率应远低于高频阈值（每秒 300 笔或单日 2 万笔）。沪深北实施细则自 2025-07-07 施行。

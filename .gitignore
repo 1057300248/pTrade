@@ -176,3 +176,5 @@ cython_debug/
 # Ignore the temp file
 temp.*
 config/local.json
+research/simtradelab_data/
+strategies/*/stats/
