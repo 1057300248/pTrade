@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import re
+import ast
 from pathlib import Path
 
 import numpy as np
@@ -160,7 +160,21 @@ def test_lot_shares_rounds_down_to_hundred_share_lots():
 
 def test_live_file_avoids_forbidden_dependencies_and_f_strings():
     source = (Path(__file__).parents[1] / "ptrade_rmdc_etf.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
 
-    for forbidden in ("sklearn", "import os", "import sys", "get_snapshot", "akshare", "mootdx"):
-        assert forbidden not in source
-    assert re.search(r"\bf['\"]", source) is None
+    imports = set()
+    calls = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.update(alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.add(node.module.split(".", 1)[0])
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                calls.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                calls.add(node.func.attr)
+
+    assert imports.isdisjoint({"sklearn", "os", "sys", "akshare", "mootdx"})
+    assert "get_snapshot" not in calls
+    assert not any(isinstance(node, ast.JoinedStr) for node in ast.walk(tree))

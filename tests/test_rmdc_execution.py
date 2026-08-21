@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import ast
 import os
 import sys
 
@@ -23,8 +24,16 @@ def test_live_source_avoids_unsupported_execution_apis():
     with open(source_path, "r", encoding="utf-8") as source_file:
         source = source_file.read()
 
-    assert "order_target_value" not in source
-    assert "get_snapshot" not in source
+    calls = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            calls.add(node.func.id)
+        elif isinstance(node.func, ast.Attribute):
+            calls.add(node.func.attr)
+
+    assert calls.isdisjoint({"order_target_value", "get_snapshot"})
 
 
 def test_initialize_registers_safety_schedule_outside_live_trading(monkeypatch):
