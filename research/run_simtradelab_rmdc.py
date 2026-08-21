@@ -8,11 +8,13 @@ import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SIMTRADE = os.path.abspath(os.path.join(ROOT, "..", "SimTradeLab"))
-if os.path.isdir(os.path.join(SIMTRADE, "src")):
-    sys.path.insert(0, os.path.join(SIMTRADE, "src"))
+SIMTRADE_SRC = os.path.join(SIMTRADE, "src")
+sys.path.insert(0, SIMTRADE_SRC)
 
 from simtradelab.backtest.config import BacktestConfig
 from simtradelab.backtest.runner import BacktestRunner
+
+REPORT_KEYS = ("total_return", "annual_return", "max_drawdown", "sharpe_ratio")
 
 
 def _copy_strategy():
@@ -50,16 +52,9 @@ def main():
     report = runner.run(config=config)
     if not report:
         raise SystemExit("SimTradeLab 回测没有返回报告")
-    keys = ["total_return", "annual_return", "max_drawdown", "sharpe_ratio", "total_trades"]
     print("SimTradeLab RMDC first-filter report")
-    for key in keys:
-        if key in report:
-            print("  %s=%s" % (key, report[key]))
-    for key, value in sorted(report.items()):
-        if key not in keys and not hasattr(value, "shape"):
-            text = str(value)
-            if len(text) < 120:
-                print("  %s=%s" % (key, text))
+    for key in REPORT_KEYS:
+        print("  %s=%s" % (key, report.get(key)))
     return report
 
 
