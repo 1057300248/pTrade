@@ -20,7 +20,7 @@ import config.Config as cfg
 secrets =cfg.config.load_secrets()  # 确保加载配置文件，获取API Key等敏感信息
 db_password = secrets["db_password"]
 api_key = secrets["api_key"]
-print(f"API Key：{api_key}")
+print("API Key loaded")
 
 sx.set_token(api_key)
 
