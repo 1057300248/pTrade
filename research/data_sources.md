@@ -31,8 +31,9 @@
 
 1. 新浪日 K，`scale=240`，`datalen=2500`（约 2016 至今）
 2. 失败则腾讯前复权日 K
-3. 写成 `research/cache/etf_daily/<code>.parquet`
-4. 同时写成 SimTradeLab 的 `research/simtradelab_data/cn/stocks/<code>.parquet`
+3. 本环境实测：东财 K 线会断开；akshare 的 `fund_etf_hist_em` 同样失败，腾讯兜底可用；mootdx TCP 7709 可达但未作为默认依赖
+4. 写成 `research/cache/etf_daily/<code>.parquet`
+5. 同时写成 SimTradeLab 的 `research/simtradelab_data/cn/stocks/<code>.parquet`
 
 字段：`date, open, high, low, close, volume, amount`。新浪无成交额时用 `close * volume` 近似。
 

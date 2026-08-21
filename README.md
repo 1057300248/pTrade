@@ -1,41 +1,36 @@
 # pTrade 量化策略仓库
 
-个人/小资金用券商 PTrade 做 A 股量化。2026 年的方向判断和落地说明见
+个人/小资金用券商 **国金 PTrade** 做 A 股量化。2026 年约束见
 [`docs/2026_a_share_quant_and_ptrade.md`](docs/2026_a_share_quant_and_ptrade.md)。
+从零主策略说明见 [`docs/rmdc_etf_design.md`](docs/rmdc_etf_design.md)。
 
 ## 当前主策略
 
-把 [`regime_etf_rotation.py`](regime_etf_rotation.py) 整文件粘贴进 PTrade：
+把 [`ptrade_rmdc_etf.py`](ptrade_rmdc_etf.py) 整文件粘贴进国金 PTrade：
 
-- 业务类型：ETF / 股票
-- 运行周期：建议分钟线（实盘 14:50 调仓）；日线回测也能跑 `run_daily`
-- Python：兼容 3.5（无 f-string）
+- 业务类型：ETF
+- 运行周期：建议分钟线（14:45 风控，14:50 周频调仓，实盘 14:54 买入）
+- Python：国金为 3.11；文件仍避免 f-string，方便 SimTradeLab 过滤
 
-核心规则：沪深300ETF 相对 60 日均线划分风险开/关 → 动量×R²×效率系数打分 → 持有 2 只 → 分差不够不换仓。
+核心：残差动量 + 拥挤否决 + 相关过滤 + 成长/防御袖仓，而不是 510300 均线状态机。
 
 ## 本地验证
 
 ```bash
-pip install numpy pandas pytest
-python -m pytest tests/test_regime_etf_rotation.py -q
-python research/backtest_regime_etf.py
+pip install numpy pandas pytest pyarrow
+python -m pytest tests/test_ptrade_rmdc_etf.py -q
+python research/fetch_free_etf_bars.py
+python research/backtest_rmdc_etf.py
 ```
 
-用同工作区 SimTradeLab 做 PTrade 之前的第一道过滤（国金没有独立 broker 口径，用 `auto`）：
+SimTradeLab 第一道过滤（国金没有独立 broker 口径，用 `auto`，不要填 `guosheng`）：
 
 ```bash
-python research/prepare_simtradelab_data.py
-PYTHONPATH=../SimTradeLab/src python research/run_simtradelab_backtest.py
+PYTHONPATH=../SimTradeLab/src python research/run_simtradelab_rmdc.py
 ```
 
-SimTradeLab 不能替代国金 PTrade 的分钟回测和仿真。不要为此去开 QMT，API 不兼容。
+SimTradeLab 不能替代国金分钟回测和仿真。不要为此去开 QMT。
 
-## 旧策略怎么用
+## 旧策略
 
-| 文件 | 建议 |
-| --- | --- |
-| `ETF轮动策略.py` / `V2` / `优化V3` | 被主策略吸收，保留对照 |
-| `动量效率因子.py` / `分数差距.py` | 已并入打分和换仓滞后 |
-| `国债逆回购.py` | 主策略实盘尾盘调用 |
-| `小市值策略.py` | 2026 年不作为主实盘 |
-| `RSI震荡策略v1.py` / `MACD背离策略.py` / `一阳穿三线策略.py` | 仅研究 |
+`regime_etf_rotation.py` 以及 RSI / MACD / 小市值 / 旧 ETF 轮动文件只作对照，不作为 2026 主实盘。
