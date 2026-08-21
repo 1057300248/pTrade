@@ -178,3 +178,4 @@ temp.*
 config/local.json
 research/simtradelab_data/
 strategies/*/stats/
+strategies/*/backtest.py
