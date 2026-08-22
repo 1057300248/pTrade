@@ -10,6 +10,11 @@ Wave 2 已于 2026-08-22 执行，累计 **N=16**。结果见
 [`../research/evoquant_candidates_wave2.md`](../research/evoquant_candidates_wave2.md)。
 **Proposed live edit: None.** 未开 `iteration_experiments.md` 额外六行。
 
+十路文献深搜（2026-08-22）的联合裁决见
+[`../research/etf_rotation_lit_next.md`](../research/etf_rotation_lit_next.md)：
+**不要开 RL/ML/NN/树训练**；下一步是纸面 `TRANCHE-N2`，再按预登记跑
+`max(vol20,vol60)` 与黄金袖仓，禁止新自由网格。
+
 ## 1. 现状（一句话）
 
 在位者是 **ADM（进取，OOS 8.17%）与 RMDC（保守，OOS 6.44%，2026-07 −0.71%）**；
