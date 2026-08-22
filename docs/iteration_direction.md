@@ -19,6 +19,10 @@ OpenAlphas「风险平价 + 20 日斜率×R²」博客已研究复现
 （[`../research/openalphas_rp_mom.md`](../research/openalphas_rp_mom.md)）：
 美股原文池未复现 52.3%；A 股 15 池只作对照，**拒绝实盘、不扩池、不换 12-1**。
 
+第三方「四象擒龙」开发笔记对照见
+[`../research/third_party_notes_vs_ours.md`](../research/third_party_notes_vs_ours.md)：
+复权与 T+1 我们已具备；20 日动量、持有 4、买入价 7% 止损**整包拒绝**。
+
 ## 1. 现状（一句话）
 
 在位者是 **ADM（进取，OOS 8.17%）与 RMDC（保守，OOS 6.44%，2026-07 −0.71%）**；
