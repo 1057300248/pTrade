@@ -453,6 +453,26 @@ def test_crowd_map_truncates_history_to_trailing_sessions():
     assert trailing == {CODE: 4}
 
 
+def test_crowd_map_cache_does_not_leak_across_panels():
+    days = 260
+    index = days - 1
+    rising, _, _, volumes = _baseline_series(days)
+    rising = np.linspace(1.0, 3.0, days)
+    highs = rising * 1.001
+    lows = rising * 0.999
+    panel_a, counts_a = _make_panel(rising, highs, lows, volumes)
+    first = crowd_map_for_index(
+        panel_a, counts_a, [CODE], index, 0.90, min_obs=60)
+
+    flat = np.full(days, 3.0)
+    flat[-1] = 3.15
+    panel_b, counts_b = _make_panel(flat, flat * 1.001, flat * 0.999, volumes)
+    second = crowd_map_for_index(
+        panel_b, counts_b, [CODE], index, 0.90, min_obs=60)
+
+    assert first != second
+
+
 # ---------------------------------------------------------------------------
 # Dependency policy
 # ---------------------------------------------------------------------------

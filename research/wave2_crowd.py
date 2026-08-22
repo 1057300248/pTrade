@@ -169,10 +169,13 @@ def crowd_map_for_index(panel, counts, codes, index, percentile,
         # ``history_sessions``; earlier bar counts cannot produce a
         # component value, so they are skipped.
         first = max(MIN_COMPONENT_BARS, count - history_sessions)
-        cache = crowd_map_for_index._component_cache
+        # Cache on the panel object, not on ``id(close)``. Numpy array
+        # identities are reused after GC, so a process-global id() map
+        # can return another test's (or another series') components.
+        cache = panel.setdefault("__wave2_crowd_cache__", {})
         prior = []
         for prior_count in range(first, count):
-            key = (id(bars["close"]), prior_count)
+            key = (code, prior_count)
             values = cache.get(key)
             if values is None:
                 values = crowding_component_values(
@@ -190,6 +193,3 @@ def crowd_map_for_index(panel, counts, codes, index, percentile,
             points = incumbent_fn(closes, highs, lows, volumes)
         crowd[code] = int(points)
     return crowd
-
-
-crowd_map_for_index._component_cache = {}
