@@ -102,8 +102,8 @@ def test_build_targets_falls_back_to_95_percent_bonds():
 def test_build_targets_scales_winner_and_places_remainder_in_bonds():
     targets = build_targets("513100.SS", 0.24)
 
-    assert np.isclose(targets["513100.SS"], 0.50)
-    assert np.isclose(targets[BOND], 0.50)
+    assert np.isclose(targets["513100.SS"], 2.0 / 3.0)
+    assert np.isclose(targets[BOND], 1.0 / 3.0)
 
 
 def test_build_targets_caps_winner_at_one():
@@ -172,3 +172,4 @@ def test_execution_callbacks_match_the_frozen_constitution():
     assert 'run_daily(context, weekly_rebalance, time="14:50")' in source
     assert 'run_daily(context, rebalance_buy, time="14:54")' in source
     assert 'run_daily(context, park_cash_in_repo, time="14:57")' in source
+    assert "def handle_data(context, data):\n    return" in source

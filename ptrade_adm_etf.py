@@ -164,7 +164,7 @@ def pick_risk_asset(score_map, gate_map, crowd_map):
     return winner
 
 
-def build_targets(winner, winner_vol, vol_target=0.12, bond=BOND):
+def build_targets(winner, winner_vol, vol_target=0.16, bond=BOND):
     """Vol-scale the winner and put the remaining allocation in bonds."""
     if winner is None:
         return {bond: 0.95}
@@ -199,7 +199,7 @@ def initialize(context):
     g.market = "510300.SS"
     g.universe = list(g.risk) + [g.bond]
     g.hist_count = 300
-    g.vol_target = 0.12
+    g.vol_target = 0.16
     g.lockdown_days = 3
     g.lockdown_left = 0
     g.last_rebalance_week = None
@@ -227,6 +227,10 @@ def initialize(context):
 
 def before_trading_start(context, data):
     g.pending_orders = {}
+
+
+def handle_data(context, data):
+    return
 
 
 def after_trading_end(context, data):
