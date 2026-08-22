@@ -44,15 +44,19 @@ def test_cached_513100_split_is_back_adjusted():
     raw = pd.read_parquet(path, columns=["date", "close"])
     raw["date"] = pd.to_datetime(raw["date"])
     raw = raw.sort_values("date").drop_duplicates("date", keep="last")
-    before = raw.loc[raw["date"] == pd.Timestamp("2022-01-13"), "close"].iloc[0]
-    after = raw.loc[raw["date"] == pd.Timestamp("2022-01-14"), "close"].iloc[0]
+    split_date = pd.Timestamp("2022-01-14")
+    before_row = raw.loc[raw["date"] < split_date].iloc[-1]
+    after_row = raw.loc[raw["date"] == split_date].iloc[0]
+    assert before_row["date"] == pd.Timestamp("2022-01-12")
+    before = before_row["close"]
+    after = after_row["close"]
     raw_return = float(after / before - 1.0)
     assert raw_return < -0.75
 
     bars = load_panel(CACHE_DIR, codes=["513100.SS"])["513100.SS"]
     dates = pd.DatetimeIndex(bars["dates"])
-    before_position = dates.get_loc(pd.Timestamp("2022-01-13"))
-    after_position = dates.get_loc(pd.Timestamp("2022-01-14"))
+    before_position = dates.get_loc(before_row["date"])
+    after_position = dates.get_loc(split_date)
     adjusted_return = float(
         bars["close"][after_position] / bars["close"][before_position] - 1.0
     )
