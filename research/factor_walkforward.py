@@ -3,8 +3,9 @@
 """Leakage-safe weekly cross-sectional ETF factor walk-forward research.
 
 The script reads the local parquet cache, computes factors only from data
-available at each weekly signal date, evaluates next-week cross-sectional
-Rank IC, and writes ``factor_walkforward_report.md``.
+available at each weekly signal date, evaluates next-week equity-only
+cross-sectional Rank IC and per-ETF time-series IC, writes heatmaps, and
+writes ``factor_walkforward_report.md``.
 
 The factor transformations are fixed before the OOS period.  The expanding
 window is therefore an information-set boundary rather than a fitted
@@ -23,48 +24,68 @@ from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 
 HERE = Path(__file__).resolve().parent
 CACHE_DIR = HERE / "cache" / "etf_daily"
 REPORT_PATH = HERE / "factor_walkforward_report.md"
+PLOT_DIR = HERE / "plots"
 
 MARKET = "510300.SS"
 SIZE = "510500.SS"
-GOLD = "518880.SS"
-BOND = "511010.SS"
 NON_ETF_FILES = {"000300.SS"}
 TEST_YEARS = tuple(range(2019, 2027))
 MIN_CROSS_SECTION = 5
+MIN_TS_WEEKS = 12
 COMBO_IR_THRESHOLD = 0.30
 
+# The GROWTH lists in ptrade_rmdc_etf.py and ptrade_combo_etf.py are identical.
+# Keep the research universe explicit so importing this module never imports a
+# live PTrade strategy.
+EQUITY_CODES = (
+    "510300.SS",
+    "510500.SS",
+    "512100.SS",
+    "159915.SZ",
+    "588000.SS",
+    "512480.SS",
+    "515880.SS",
+    "515980.SS",
+    "512660.SS",
+    "512010.SS",
+    "512800.SS",
+    "512880.SS",
+    "512690.SS",
+    "512400.SS",
+    "515030.SS",
+    "516160.SS",
+    "515220.SS",
+)
+
 FACTORS = (
-    "mom21",
-    "mom63",
-    "mom126",
-    "residual_mom",
-    "vol20",
-    "inv_vol",
-    "turnover_z",
-    "crowding_points",
+    "ts_mom_12_1",
+    "ts_mom_63",
+    "ts_mom_21",
+    "close_ma120",
     "close_ma60",
-    "corr_to_300_60d",
-    "gold_spread",
-    "bond_spread",
+    "term_spread",
+    "crowding_points",
+    "residual_mom",
 )
 
 DISPLAY_NAME = {
-    "mom21": "mom21",
-    "mom63": "mom63",
-    "mom126": "mom126",
-    "residual_mom": "residual_mom",
-    "vol20": "vol20",
-    "inv_vol": "inv_vol",
-    "turnover_z": "turnover_z",
-    "crowding_points": "crowding_points",
+    "ts_mom_12_1": "ts_mom_12_1",
+    "ts_mom_63": "ts_mom_63",
+    "ts_mom_21": "ts_mom_21",
+    "close_ma120": "close/ma120",
     "close_ma60": "close/ma60",
-    "corr_to_300_60d": "corr_to_300_60d",
-    "gold_spread": "gold_spread",
-    "bond_spread": "bond_spread",
+    "term_spread": "term_spread",
+    "crowding_points": "crowding_points",
+    "residual_mom": "residual_mom",
 }
 
 
@@ -101,7 +122,7 @@ def load_daily_panel() -> Dict[str, pd.DataFrame]:
         if code in NON_ETF_FILES:
             continue
         panel[code] = _load_one(path)
-    missing_refs = {MARKET, SIZE, GOLD, BOND}.difference(panel)
+    missing_refs = {MARKET, SIZE}.difference(panel)
     if missing_refs:
         raise ValueError("missing required reference ETFs: %s" % sorted(missing_refs))
     return panel
@@ -196,25 +217,19 @@ def build_factor_panel(daily: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
 
         features = pd.DataFrame(index=frame.index)
         features["close"] = close
-        features["mom21"] = close.pct_change(21)
-        features["mom63"] = close.pct_change(63)
-        features["mom126"] = close.pct_change(126)
-        features["vol20"] = (
-            asset_return.rolling(20, min_periods=20).std(ddof=1) * math.sqrt(252.0)
-        )
-        features["inv_vol"] = _safe_ratio(
-            pd.Series(1.0, index=frame.index), features["vol20"]
-        )
-        amount20 = frame["amount"].rolling(20, min_periods=20).mean()
-        amount120 = frame["amount"].rolling(120, min_periods=120).mean()
-        features["_turnover_ratio"] = _safe_ratio(amount20, amount120) - 1.0
-        features["crowding_points"] = _crowding_points(frame)
+        primary_12_1 = _safe_ratio(close.shift(21), close.shift(252)) - 1.0
+        fallback_12_1 = _safe_ratio(close.shift(5), close.shift(126)) - 1.0
+        features["ts_mom_12_1"] = primary_12_1.combine_first(fallback_12_1)
+        features["ts_mom_63"] = close.pct_change(63)
+        features["ts_mom_21"] = close.pct_change(21)
+        ma120 = close.rolling(120, min_periods=120).mean()
         ma60 = close.rolling(60, min_periods=60).mean()
+        features["close_ma120"] = _safe_ratio(close, ma120)
         features["close_ma60"] = _safe_ratio(close, ma60)
-        aligned_market_return = _reference_series(market_return, frame.index)
-        features["corr_to_300_60d"] = asset_return.rolling(
-            60, min_periods=45
-        ).corr(aligned_market_return)
+        features["term_spread"] = (
+            close.pct_change(10) - close.pct_change(5)
+        )
+        features["crowding_points"] = _crowding_points(frame)
 
         regression_frame = pd.concat(
             [
@@ -251,31 +266,6 @@ def build_factor_panel(daily: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     panel["signal_date"] = pd.to_datetime(panel["signal_date"])
     panel["target_date"] = pd.to_datetime(panel["target_date"])
     panel["test_year"] = panel["signal_date"].dt.year
-
-    # "turnover_z" is the weekly cross-sectional z-score of 20d/120d
-    # average amount growth. Rank IC is invariant to this affine scaling.
-    grouped_turnover = panel.groupby("week_order")["_turnover_ratio"]
-    turnover_mean = grouped_turnover.transform("mean")
-    turnover_std = grouped_turnover.transform("std")
-    panel["turnover_z"] = _safe_ratio(
-        panel["_turnover_ratio"] - turnover_mean, turnover_std
-    )
-
-    # Spreads use one common weekly reference value for the entire
-    # cross-section. Individual ETFs may have a stale final bar in a week;
-    # that must not also move the benchmark date for just that ETF.
-    gold_by_week = (
-        panel.loc[panel["code"].eq(GOLD), ["week_order", "mom63"]]
-        .drop_duplicates("week_order")
-        .set_index("week_order")["mom63"]
-    )
-    bond_by_week = (
-        panel.loc[panel["code"].eq(BOND), ["week_order", "mom63"]]
-        .drop_duplicates("week_order")
-        .set_index("week_order")["mom63"]
-    )
-    panel["gold_spread"] = panel["mom63"] - panel["week_order"].map(gold_by_week)
-    panel["bond_spread"] = panel["mom63"] - panel["week_order"].map(bond_by_week)
     return panel
 
 
@@ -295,6 +285,27 @@ def weekly_rank_ic(
         value = ranks[factor].corr(ranks["forward_return"])
         if np.isfinite(value):
             observations[int(week_order)] = float(value)
+    return pd.Series(observations, dtype=float, name=factor).sort_index()
+
+
+def per_name_time_series_ic(
+    frame: pd.DataFrame, factor: str, minimum_weeks: int = MIN_TS_WEEKS
+) -> pd.Series:
+    """Pearson corr(factor_t, next-week return_t) within each ETF."""
+    observations = {}
+    for code, group in frame.groupby("code", sort=True):
+        pair = (
+            group.loc[:, [factor, "forward_return"]]
+            .replace([np.inf, -np.inf], np.nan)
+            .dropna()
+        )
+        if len(pair) < minimum_weeks:
+            continue
+        if pair[factor].nunique() < 2 or pair["forward_return"].nunique() < 2:
+            continue
+        value = pair[factor].corr(pair["forward_return"])
+        if np.isfinite(value):
+            observations[str(code)] = float(value)
     return pd.Series(observations, dtype=float, name=factor).sort_index()
 
 
@@ -345,12 +356,16 @@ def _pooled_history(
 
 
 def run_walk_forward(panel: pd.DataFrame) -> Dict[str, object]:
-    """Evaluate annual OOS slices and form the strictly lagged combo."""
-    factor_history: Dict[str, List[pd.Series]] = {factor: [] for factor in FACTORS}
-    annual: Dict[int, Dict[str, Dict[str, float]]] = {}
+    """Evaluate annual OOS slices and form the strictly lagged equity-CS combo."""
+    cs_history: Dict[str, List[pd.Series]] = {factor: [] for factor in FACTORS}
+    cs_annual: Dict[int, Dict[str, Dict[str, float]]] = {}
+    ts_annual: Dict[int, Dict[str, Dict[str, float]]] = {}
+    ts_name_values: Dict[int, Dict[str, pd.Series]] = {}
     combo_history: List[pd.Series] = []
     combo_selected: Dict[int, List[str]] = {}
     audit_rows = []
+    tsmom_hit_rows = []
+    oos_frames = []
 
     for year in TEST_YEARS:
         cutoff = pd.Timestamp(year=year, month=1, day=1)
@@ -371,25 +386,62 @@ def run_walk_forward(panel: pd.DataFrame) -> Dict[str, object]:
         ):
             raise AssertionError("test signals fall outside year %d" % year)
 
-        annual[year] = {}
-        for factor in FACTORS:
-            values = weekly_rank_ic(test, factor)
-            annual[year][factor] = ic_summary(values)
-            factor_history[factor].append(values)
+        equity_test = test.loc[test["code"].isin(EQUITY_CODES)].copy()
+        present_equities = set(equity_test["code"].unique())
+        expected_equities = set(EQUITY_CODES).intersection(panel["code"].unique())
+        if present_equities != expected_equities:
+            raise AssertionError(
+                "equity cross-section mismatch in %d: missing=%s"
+                % (year, sorted(expected_equities.difference(present_equities)))
+            )
 
+        # Freeze combo membership before evaluating any labels in this year.
         selected = []
         if year > TEST_YEARS[0]:
             for factor in FACTORS:
-                # Exclude the current year's values, which were just appended.
-                prior_values = pd.concat(factor_history[factor][:-1])
+                prior_values = _pooled_history(cs_history, factor)
                 prior_ir = ic_summary(prior_values)["ir"]
                 if np.isfinite(prior_ir) and prior_ir > COMBO_IR_THRESHOLD:
                     selected.append(factor)
         combo_selected[year] = selected
-        test["combo"] = _combo_score(test, selected)
-        combo_values = weekly_rank_ic(test, "combo") if selected else pd.Series(dtype=float)
-        annual[year]["combo"] = ic_summary(combo_values)
+        equity_test["combo"] = _combo_score(equity_test, selected)
+        combo_values = (
+            weekly_rank_ic(equity_test, "combo")
+            if selected
+            else pd.Series(dtype=float)
+        )
         combo_history.append(combo_values)
+
+        cs_annual[year] = {}
+        ts_annual[year] = {}
+        ts_name_values[year] = {}
+        for factor in FACTORS:
+            cs_values = weekly_rank_ic(equity_test, factor)
+            cs_annual[year][factor] = ic_summary(cs_values)
+            cs_history[factor].append(cs_values)
+
+            ts_values = per_name_time_series_ic(test, factor)
+            ts_name_values[year][factor] = ts_values
+            ts_annual[year][factor] = ic_summary(ts_values)
+        cs_annual[year]["combo"] = ic_summary(combo_values)
+
+        positive_tsmom = equity_test.loc[
+            equity_test["ts_mom_12_1"].gt(0.0)
+            & equity_test["forward_return"].notna()
+        ]
+        tsmom_hit_rows.append(
+            {
+                "year": year,
+                "weeks": int(positive_tsmom["week_order"].nunique()),
+                "observations": int(len(positive_tsmom)),
+                "hit_rate": (
+                    float(positive_tsmom["forward_return"].gt(0.0).mean())
+                    if not positive_tsmom.empty
+                    else np.nan
+                ),
+            }
+        )
+        oos_frames.append(test)
 
         labeled_test = test.loc[test["forward_return"].notna()]
         audit_rows.append(
@@ -420,17 +472,44 @@ def run_walk_forward(panel: pd.DataFrame) -> Dict[str, object]:
             }
         )
 
-    pooled = {
-        factor: ic_summary(_pooled_history(factor_history, factor))
+    oos_panel = pd.concat(oos_frames, ignore_index=True, sort=False)
+    cs_pooled = {
+        factor: ic_summary(_pooled_history(cs_history, factor))
         for factor in FACTORS
     }
-    pooled["combo"] = ic_summary(pd.concat(combo_history))
+    cs_pooled["combo"] = ic_summary(pd.concat(combo_history))
+    ts_pooled_values = {
+        factor: per_name_time_series_ic(oos_panel, factor) for factor in FACTORS
+    }
+    ts_pooled = {
+        factor: ic_summary(ts_pooled_values[factor]) for factor in FACTORS
+    }
+    positive_tsmom_oos = oos_panel.loc[
+        oos_panel["code"].isin(EQUITY_CODES)
+        & oos_panel["ts_mom_12_1"].gt(0.0)
+        & oos_panel["forward_return"].notna()
+    ]
+    tsmom_hit_pooled = {
+        "year": "Pooled",
+        "weeks": int(positive_tsmom_oos["week_order"].nunique()),
+        "observations": int(len(positive_tsmom_oos)),
+        "hit_rate": (
+            float(positive_tsmom_oos["forward_return"].gt(0.0).mean())
+            if not positive_tsmom_oos.empty
+            else np.nan
+        ),
+    }
     return {
-        "annual": annual,
-        "pooled": pooled,
-        "factor_history": factor_history,
+        "cs_annual": cs_annual,
+        "cs_pooled": cs_pooled,
+        "cs_history": cs_history,
+        "ts_annual": ts_annual,
+        "ts_pooled": ts_pooled,
+        "ts_name_values": ts_name_values,
+        "ts_pooled_values": ts_pooled_values,
         "combo_history": combo_history,
         "combo_selected": combo_selected,
+        "tsmom_hit": tsmom_hit_rows + [tsmom_hit_pooled],
         "audit": audit_rows,
     }
 
@@ -476,7 +555,9 @@ def _annual_matrix(
 
 
 def _multiple_testing_rows(
-    pooled: Mapping[str, Mapping[str, float]], number_of_tests: int
+    pooled: Mapping[str, Mapping[str, float]],
+    number_of_tests: int,
+    annualize: bool,
 ) -> List[List[object]]:
     normal = NormalDist()
     euler_gamma = 0.5772156649015329
@@ -488,16 +569,17 @@ def _multiple_testing_rows(
     rows = []
     for factor in sorted(
         FACTORS,
-        key=lambda name: pooled[name]["annualized_ic_sharpe"],
+        key=lambda name: pooled[name]["ir"],
         reverse=True,
     ):
         metrics = pooled[factor]
         count = int(metrics["n"])
+        scale = math.sqrt(52.0) if annualize else 1.0
+        observed = metrics["ir"] * scale if np.isfinite(metrics["ir"]) else np.nan
         hurdle = (
-            expected_max_z * math.sqrt(52.0 / count) if count > 0 else np.nan
+            expected_max_z * scale / math.sqrt(count) if count > 0 else np.nan
         )
-        annualized = metrics["annualized_ic_sharpe"]
-        deflated = annualized - hurdle if np.isfinite(annualized) else np.nan
+        deflated = observed - hurdle if np.isfinite(observed) else np.nan
         z_score = (
             abs(metrics["ir"]) * math.sqrt(count)
             if count > 0 and np.isfinite(metrics["ir"])
@@ -512,7 +594,7 @@ def _multiple_testing_rows(
         rows.append(
             [
                 DISPLAY_NAME[factor],
-                _fmt(annualized),
+                _fmt(observed),
                 _fmt(hurdle),
                 _fmt(deflated),
                 _fmt(bonferroni, 4),
@@ -521,19 +603,97 @@ def _multiple_testing_rows(
     return rows
 
 
+def _write_heatmap(
+    annual: Mapping[int, Mapping[str, Mapping[str, float]]],
+    title: str,
+    path: Path,
+) -> None:
+    matrix = np.asarray(
+        [
+            [annual[year][factor]["mean"] for year in TEST_YEARS]
+            for factor in FACTORS
+        ],
+        dtype=float,
+    )
+    finite = np.abs(matrix[np.isfinite(matrix)])
+    limit = max(0.10, float(finite.max()) if finite.size else 0.10)
+
+    figure, axis = plt.subplots(figsize=(12.0, 5.6))
+    image = axis.imshow(
+        matrix,
+        cmap="RdBu_r",
+        aspect="auto",
+        interpolation="nearest",
+        vmin=-limit,
+        vmax=limit,
+    )
+    axis.set_xticks(np.arange(len(TEST_YEARS)))
+    axis.set_xticklabels([str(year) for year in TEST_YEARS])
+    axis.set_yticks(np.arange(len(FACTORS)))
+    axis.set_yticklabels([DISPLAY_NAME[factor] for factor in FACTORS])
+    axis.set_xlabel("OOS test year")
+    axis.set_ylabel("A priori factor")
+    axis.set_title(title)
+    for row in range(matrix.shape[0]):
+        for column in range(matrix.shape[1]):
+            value = matrix[row, column]
+            label = "N/A" if not np.isfinite(value) else "%.2f" % value
+            color = "white" if np.isfinite(value) and abs(value) > 0.58 * limit else "black"
+            axis.text(column, row, label, ha="center", va="center", fontsize=8, color=color)
+    colorbar = figure.colorbar(image, ax=axis, fraction=0.03, pad=0.03)
+    colorbar.set_label("IC mean")
+    figure.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(figure)
+
+
+def write_heatmaps(results: Mapping[str, object]) -> List[Path]:
+    paths = [
+        PLOT_DIR / "equity_cs_ic_mean_heatmap.png",
+        PLOT_DIR / "ts_ic_mean_heatmap.png",
+    ]
+    _write_heatmap(
+        results["cs_annual"],
+        "Equity-only cross-sectional weekly Rank IC mean",
+        paths[0],
+    )
+    _write_heatmap(
+        results["ts_annual"],
+        "Per-ETF time-series IC mean across names",
+        paths[1],
+    )
+    return paths
+
+
 def build_report(
     panel: pd.DataFrame,
     results: Mapping[str, object],
     source_file_count: int,
 ) -> str:
-    annual = results["annual"]
-    pooled = results["pooled"]
+    annual = results["cs_annual"]
+    pooled = results["cs_pooled"]
+    ts_annual = results["ts_annual"]
+    ts_pooled = results["ts_pooled"]
     combo_selected = results["combo_selected"]
 
     pooled_rows = []
     for factor in sorted(FACTORS, key=lambda name: pooled[name]["ir"], reverse=True):
         metrics = pooled[factor]
         pooled_rows.append(
+            [
+                DISPLAY_NAME[factor],
+                int(metrics["n"]),
+                _fmt(metrics["mean"]),
+                _fmt(metrics["ir"]),
+                _pct(metrics["hit_rate"]),
+            ]
+        )
+
+    ts_pooled_rows = []
+    for factor in sorted(FACTORS, key=lambda name: ts_pooled[name]["ir"], reverse=True):
+        metrics = ts_pooled[factor]
+        ts_pooled_rows.append(
             [
                 DISPLAY_NAME[factor],
                 int(metrics["n"]),
@@ -595,10 +755,43 @@ def build_report(
         "%s (IR %s)" % (DISPLAY_NAME[name], _fmt(pooled[name]["ir"]))
         for name in top_factors
     )
+    top_ts_factors = sorted(
+        FACTORS, key=lambda name: ts_pooled[name]["ir"], reverse=True
+    )[:5]
+    best_ts_text = ", ".join(
+        "%s (IC %s, IR %s)"
+        % (
+            DISPLAY_NAME[name],
+            _fmt(ts_pooled[name]["mean"]),
+            _fmt(ts_pooled[name]["ir"]),
+        )
+        for name in top_ts_factors
+    )
+
+    tsmom_hit_rows = [
+        [
+            row["year"],
+            row["weeks"],
+            row["observations"],
+            _pct(row["hit_rate"]),
+        ]
+        for row in results["tsmom_hit"]
+    ]
+    any_combo = any(bool(selected) for selected in combo_selected.values())
+    combo_note = (
+        "At least one factor crossed the prior-OOS equity-CS IC IR threshold; "
+        "each year's membership shown above was frozen before that year's labels."
+        if any_combo
+        else "No factor crossed the specified prior-OOS equity-CS IC IR threshold, "
+        "so the rule produces no combo observations. Forcing a combo or lowering "
+        "the threshold after seeing these results would violate the predeclared "
+        "selection protocol."
+    )
 
     first_date = panel["signal_date"].min().date().isoformat()
     last_date = panel["signal_date"].max().date().isoformat()
     etf_count = int(panel["code"].nunique())
+    equity_count = int(panel.loc[panel["code"].isin(EQUITY_CODES), "code"].nunique())
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     sections = [
@@ -609,31 +802,39 @@ def build_report(
         "## Protocol and leakage controls",
         "",
         "- Data: %d parquet files; %d ETFs after excluding the standalone "
-        "`000300.SS` index; weekly signal coverage %s through %s."
-        % (source_file_count, etf_count, first_date, last_date),
+        "`000300.SS` index; %d equity ETFs in the live `GROWTH` sleeve; weekly "
+        "signal coverage %s through %s."
+        % (source_file_count, etf_count, equity_count, first_date, last_date),
         "- Signal row: Friday or the last available bar of each ISO week. "
         "Label: close-to-close return from that row to the next ISO week only. "
         "Missing whole weeks are not bridged.",
-        "- Rank IC: weekly cross-sectional Spearman correlation, requiring at "
-        "least %d ETFs. IC IR is mean weekly IC divided by its weekly standard "
-        "deviation (not annualized)." % MIN_CROSS_SECTION,
+        "- Equity-CS IC: weekly cross-sectional Spearman correlation using only "
+        "the 17-name `GROWTH` equity sleeve, requiring at least %d names. IC IR "
+        "is mean weekly IC divided by its weekly standard deviation."
+        % MIN_CROSS_SECTION,
+        "- TS-IC: within each ETF, Pearson corr(factor at T, next-week return), "
+        "requiring at least %d weeks; the reported IC is the mean across ETF "
+        "names and its IR uses dispersion across names." % MIN_TS_WEEKS,
         "- Walk-forward: for test year Y, training observations must have their "
         "next-week label strictly before January 1 of Y. Fixed factor formulas "
         "have no cross-sectional fitted coefficients. The residual factor's "
         "120-day time-series OLS ends five trading returns before each signal.",
-        "- Combo: equal-weight average of complete cross-sectional percentile "
-        "ranks. A factor enters only when its pooled IC IR across already "
-        "completed OOS years exceeds %.2f. The current test year is appended "
-        "only after its combo is fixed." % COMBO_IR_THRESHOLD,
+        "- Combo: equal-weight average of complete equity cross-sectional "
+        "percentile ranks. A factor enters only when its pooled equity-CS IC IR "
+        "across already completed OOS years exceeds %.2f. TS-IC is not mixed "
+        "into this selector, and current-year labels are appended only after "
+        "membership is fixed." % COMBO_IR_THRESHOLD,
         "- No month or subperiod, including 2026-07, receives special tuning or "
         "selection treatment.",
         "",
-        "Factor details: `turnover_z` is the weekly cross-sectional z-score of "
-        "(20-day mean amount / 120-day mean amount - 1); `crowding_points` is "
-        "the live 0-4 clone (volume surge, price extension, weak close-volume "
-        "correlation, high amplitude); `residual_mom` is the 60-day residual "
-        "sum/std from the 120-day OLS on 510300 returns and the "
-        "510500-minus-510300 size spread.",
+        "A priori factors: `ts_mom_12_1` is close(T-21)/close(T-252)-1, "
+        "falling back to close(T-5)/close(T-126)-1 until 252 bars exist; "
+        "`term_spread` is the 10-day return minus the 5-day return. "
+        "`crowding_points` is the raw live 0-4 score and `residual_mom` is the "
+        "existing 120-day OLS residual score; both are retained as predeclared "
+        "negative controls. Common-series gold/bond spreads are excluded "
+        "because subtracting one value from every name cannot change a "
+        "cross-sectional rank.",
         "",
         "## Walk-forward boundary audit",
         "",
@@ -653,25 +854,68 @@ def build_report(
         "The first OOS year is 2019. Its combo is deliberately absent because "
         "there is no prior OOS evidence available for factor selection.",
         "",
-        "## Pooled OOS factor results (2019-2026)",
+        "## Equity-only cross-sectional IC",
+        "",
+        "### Pooled OOS results (2019-2026)",
         "",
         _markdown_table(
             ["Factor", "Weeks", "IC mean", "IC IR", "Hit rate"], pooled_rows
         ),
         "",
-        "Top pooled OOS factor rows by IC IR: %s." % best_text,
+        "Top pooled equity-CS rows by IC IR: %s." % best_text,
         "",
-        "## IC mean by test year",
+        "### IC mean by test year",
         "",
         _annual_matrix(annual, "mean", _fmt),
         "",
-        "## IC IR by test year",
+        "### IC IR by test year",
         "",
         _annual_matrix(annual, "ir", _fmt),
         "",
-        "## Positive-IC hit rate by test year",
+        "### Positive-IC hit rate by test year",
         "",
         _annual_matrix(annual, "hit_rate", _pct),
+        "",
+        "![Equity-CS IC heatmap](plots/equity_cs_ic_mean_heatmap.png)",
+        "",
+        "## Per-ETF time-series IC",
+        "",
+        "For each ETF and test slice, IC is the Pearson correlation over time "
+        "between the factor and the strict next-week return. The pooled table "
+        "recomputes each name's correlation over all OOS weeks rather than "
+        "averaging annual correlations.",
+        "",
+        _markdown_table(
+            ["Factor", "ETFs", "Mean per-name IC", "Cross-name IR", "Positive-name rate"],
+            ts_pooled_rows,
+        ),
+        "",
+        "Top pooled TS rows by cross-name IR: %s." % best_ts_text,
+        "",
+        "### Mean per-name TS-IC by test year",
+        "",
+        _annual_matrix(ts_annual, "mean", _fmt),
+        "",
+        "### Cross-name TS-IC IR by test year",
+        "",
+        _annual_matrix(ts_annual, "ir", _fmt),
+        "",
+        "### Positive-name TS-IC rate by test year",
+        "",
+        _annual_matrix(ts_annual, "hit_rate", _pct),
+        "",
+        "![TS-IC heatmap](plots/ts_ic_mean_heatmap.png)",
+        "",
+        "## TSMOM conditional hit rate (equity only)",
+        "",
+        "This is the fraction of positive next-week returns among equity "
+        "ETF-weeks where `ts_mom_12_1 > 0`. It is diagnostic only and never "
+        "enters combo selection.",
+        "",
+        _markdown_table(
+            ["Year", "Weeks with signals", "Positive-signal ETF-weeks", "Hit rate"],
+            tsmom_hit_rows,
+        ),
         "",
         "## Strictly lagged OOS combo",
         "",
@@ -680,19 +924,14 @@ def build_report(
             combo_rows,
         ),
         "",
-        "No factor crossed the specified prior-OOS IC IR threshold on this "
-        "dataset, so the rule produces no combo observations. Forcing a combo "
-        "or lowering the threshold after seeing these results would violate "
-        "the predeclared selection protocol.",
+        combo_note,
         "",
         "## Multiple-testing adjustment",
         "",
-        "There are N=%d declared factor tests. The table reports annualized IC "
-        "Sharpe (`sqrt(52) * IC IR`), an expected-best null hurdle for N "
-        "independent Gaussian tests, their difference as a simple deflated "
-        "score, and a two-sided normal p-value multiplied by N (Bonferroni). "
-        "This is a screening correction, not a claim that weekly ICs are "
-        "perfectly Gaussian or independent." % len(FACTORS),
+        "There are N=%d predeclared factor tests. For equity-CS, the table "
+        "reports annualized IC Sharpe (`sqrt(52) * IC IR`), an expected-best "
+        "null hurdle for N independent Gaussian tests, their difference, and a "
+        "two-sided normal p-value multiplied by N (Bonferroni)." % len(FACTORS),
         "",
         _markdown_table(
             [
@@ -702,22 +941,35 @@ def build_report(
                 "Deflated score",
                 "Bonferroni p",
             ],
-            _multiple_testing_rows(pooled, len(FACTORS)),
+            _multiple_testing_rows(pooled, len(FACTORS), annualize=True),
         ),
         "",
-        "The nominal N=12 is conservative for the expected-maximum calculation "
-        "because the tests are dependent. In particular, subtracting the same "
-        "weekly gold or bond return from every ETF preserves the cross-sectional "
-        "rank, so `gold_spread`, `bond_spread`, and `mom63` have identical Rank "
-        "IC. `inv_vol` is also an exact rank reversal of `vol20`. Bonferroni "
-        "remains a simple family-wise guard under dependence, but neither "
-        "adjustment removes ETF-universe survivorship bias.",
+        "For TS-IC, temporal annualization is inappropriate because the "
+        "observations summarized by the IR are per-name correlations. The same "
+        "N-test adjustment is therefore shown in raw cross-name IC IR units.",
+        "",
+        _markdown_table(
+            [
+                "Factor",
+                "Cross-name IC IR",
+                "N-test null hurdle",
+                "Deflated IR",
+                "Bonferroni p",
+            ],
+            _multiple_testing_rows(ts_pooled, len(FACTORS), annualize=False),
+        ),
+        "",
+        "These simple corrections treat weekly ICs or ETF-level ICs as "
+        "independent for the expected-maximum hurdle, which is only an "
+        "approximation. Bonferroni remains a conservative family-wise screen "
+        "under dependence. Neither adjustment removes ETF-universe survivorship "
+        "bias.",
         "",
         "## Interpretation limits",
         "",
-        "- These are predictive cross-sectional diagnostics, not a traded "
-        "portfolio backtest; turnover, costs, capacity, and constraints are not "
-        "included.",
+        "- These are predictive cross-sectional and per-name diagnostics, not a "
+        "traded portfolio backtest; turnover, costs, capacity, and constraints "
+        "are not included.",
         "- The cache contains today's known ETF universe. ETFs enter only after "
         "their own history begins, but delisted or unavailable historical ETFs "
         "may be absent.",
@@ -733,27 +985,37 @@ def run() -> Dict[str, object]:
     factor_panel = build_factor_panel(daily)
     results = run_walk_forward(factor_panel)
     source_count = len(list(CACHE_DIR.glob("*.parquet")))
+    plot_paths = write_heatmaps(results)
     report = build_report(factor_panel, results, source_count)
     REPORT_PATH.write_text(report, encoding="utf-8")
 
-    ranked = sorted(
+    cs_ranked = sorted(
         FACTORS,
-        key=lambda name: results["pooled"][name]["ir"],
+        key=lambda name: results["cs_pooled"][name]["ir"],
+        reverse=True,
+    )
+    ts_ranked = sorted(
+        FACTORS,
+        key=lambda name: results["ts_pooled"][name]["ir"],
         reverse=True,
     )
     print("report=%s" % REPORT_PATH)
+    print("plots=%s" % ", ".join(str(path) for path in plot_paths))
     print(
-        "panel=%d ETF-weeks, ETFs=%d, OOS years=%d-%d"
+        "panel=%d ETF-weeks, ETFs=%d, equities=%d, OOS years=%d-%d"
         % (
             len(factor_panel),
             factor_panel["code"].nunique(),
+            factor_panel.loc[
+                factor_panel["code"].isin(EQUITY_CODES), "code"
+            ].nunique(),
             TEST_YEARS[0],
             TEST_YEARS[-1],
         )
     )
-    print("best pooled OOS factors:")
-    for factor in ranked[:5]:
-        metrics = results["pooled"][factor]
+    print("best pooled equity-CS factors:")
+    for factor in cs_ranked[:5]:
+        metrics = results["cs_pooled"][factor]
         print(
             "  %-20s IC=% .4f IR=% .3f hit=%5.1f%% n=%d"
             % (
@@ -764,7 +1026,20 @@ def run() -> Dict[str, object]:
                 metrics["n"],
             )
         )
-    combo = results["pooled"]["combo"]
+    print("best pooled TS-IC factors:")
+    for factor in ts_ranked[:5]:
+        metrics = results["ts_pooled"][factor]
+        print(
+            "  %-20s IC=% .4f IR=% .3f positive_names=%5.1f%% n=%d"
+            % (
+                DISPLAY_NAME[factor],
+                metrics["mean"],
+                metrics["ir"],
+                metrics["hit_rate"] * 100.0,
+                metrics["n"],
+            )
+        )
+    combo = results["cs_pooled"]["combo"]
     print(
         "strict lagged combo: IC=% .4f IR=% .3f hit=%5.1f%% n=%d"
         % (
