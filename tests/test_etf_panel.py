@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from research.etf_panel import detect_jumps, load_panel
+from research.prepare_simtradelab_data import regenerate
 
 
 CACHE_DIR = Path(__file__).resolve().parents[1] / "research" / "cache" / "etf_daily"
@@ -63,3 +64,31 @@ def test_cached_513100_split_is_back_adjusted():
 
     assert after_position in detect_jumps(raw["close"].to_numpy(dtype=float))
     assert abs(adjusted_return) < 0.22
+
+
+def test_simtradelab_preparer_writes_adjusted_ohlc(tmp_path):
+    cache_dir = tmp_path / "cache"
+    out_dir = tmp_path / "simtradelab"
+    cache_dir.mkdir()
+    raw = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2022-01-12", "2022-01-14"]),
+            "open": [90.0, 19.0],
+            "high": [110.0, 21.0],
+            "low": [80.0, 18.0],
+            "close": [100.0, 20.0],
+            "volume": [100.0, 500.0],
+            "amount": [10000.0, 10000.0],
+        }
+    )
+    raw.to_parquet(cache_dir / "TEST.SS.parquet", index=False)
+
+    assert regenerate(cache_dir, out_dir) == {"TEST.SS": 2}
+    prepared = pd.read_parquet(out_dir / "TEST.SS.parquet")
+
+    assert np.allclose(prepared["open"], [18.0, 19.0])
+    assert np.allclose(prepared["high"], [22.0, 21.0])
+    assert np.allclose(prepared["low"], [16.0, 18.0])
+    assert np.allclose(prepared["close"], [20.0, 20.0])
+    assert np.allclose(prepared["volume"], [500.0, 500.0])
+    assert np.array_equal(prepared["amount"], raw["amount"])

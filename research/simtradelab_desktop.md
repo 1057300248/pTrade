@@ -56,3 +56,10 @@ PYTHONPATH=/agent/repos/SimTradeLab/src python3 research/run_simtradelab_rmdc.py
 PYTHONPATH=/agent/repos/SimTradeLab/src python3 research/run_simtradelab_adm.py
 PYTHONPATH=/agent/repos/SimTradeLab/src python3 research/run_simtradelab_gem.py
 ```
+
+## split-adjusted SimTradeLab rerun
+
+`prepare_simtradelab_data.py` 现会从 `research/cache/etf_daily` 完整重建
+`research/simtradelab_data`，所有 OHLC/volume 先经过 `research.etf_panel` 的
+`|ret| > 22%` 拆分/合并回调；CNY `amount` 保持不变。上面的 2024–2026 RMDC/GEM
+污染结果仅保留为修复前对照，不再是有效绩效数字。
