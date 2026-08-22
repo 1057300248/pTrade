@@ -552,12 +552,16 @@ def build_report(
     for year in TEST_YEARS:
         metrics = annual[year]["combo"]
         selected = combo_selected[year]
+        if selected:
+            selection_text = ", ".join(DISPLAY_NAME[item] for item in selected)
+        elif year == TEST_YEARS[0]:
+            selection_text = "None (first OOS year)"
+        else:
+            selection_text = "None (no prior-OOS IC IR > %.2f)" % COMBO_IR_THRESHOLD
         combo_rows.append(
             [
                 year,
-                ", ".join(DISPLAY_NAME[item] for item in selected)
-                if selected
-                else "None (no prior OOS evidence)",
+                selection_text,
                 int(metrics["n"]),
                 _fmt(metrics["mean"]),
                 _fmt(metrics["ir"]),
@@ -667,6 +671,11 @@ def build_report(
             ["Year", "Factors fixed before year", "Weeks", "IC mean", "IC IR", "Hit rate"],
             combo_rows,
         ),
+        "",
+        "No factor crossed the specified prior-OOS IC IR threshold on this "
+        "dataset, so the rule produces no combo observations. Forcing a combo "
+        "or lowering the threshold after seeing these results would violate "
+        "the predeclared selection protocol.",
         "",
         "## Multiple-testing adjustment",
         "",
