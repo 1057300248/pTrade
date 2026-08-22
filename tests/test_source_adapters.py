@@ -282,6 +282,14 @@ def test_fetch_free_stockdb_http_parses_engine_json(monkeypatch):
     assert frame["close"].iloc[0] == 1.1
 
 
+def test_fetch_cli_selects_universe_from_comma_string():
+    from research.fetch_free_etf_bars import _selected_universe
+
+    rows = _selected_universe("510300.SS,159915.SZ")
+    assert [row[0] for row in rows] == ["510300.SS", "159915.SZ"]
+    assert _selected_universe("sh510300")[0][0] == "510300.SS"
+
+
 def test_live_ptrade_files_do_not_import_research_feeds():
     files = sorted(ROOT.glob("ptrade_*.py"))
     assert files

@@ -105,6 +105,8 @@ def _reuse_current_outputs(code, cache_path, sim_path):
 def _selected_universe(codes):
     if not codes:
         return list(UNIVERSE)
+    if isinstance(codes, str):
+        codes = [codes]
     wanted = set()
     for item in codes:
         for part in str(item).replace(";", ",").split(","):
