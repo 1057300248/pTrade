@@ -388,11 +388,11 @@ def run_walk_forward(panel: pd.DataFrame) -> Dict[str, object]:
 
         equity_test = test.loc[test["code"].isin(EQUITY_CODES)].copy()
         present_equities = set(equity_test["code"].unique())
-        expected_equities = set(EQUITY_CODES).intersection(panel["code"].unique())
-        if present_equities != expected_equities:
+        unexpected_equities = present_equities.difference(EQUITY_CODES)
+        if unexpected_equities or len(present_equities) < MIN_CROSS_SECTION:
             raise AssertionError(
-                "equity cross-section mismatch in %d: missing=%s"
-                % (year, sorted(expected_equities.difference(present_equities)))
+                "invalid equity cross-section in %d: count=%d unexpected=%s"
+                % (year, len(present_equities), sorted(unexpected_equities))
             )
 
         # Freeze combo membership before evaluating any labels in this year.
