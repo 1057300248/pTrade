@@ -14,6 +14,8 @@ import sys
 import numpy as np
 import pandas as pd
 
+from etf_panel import load_panel
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
@@ -36,7 +38,6 @@ pick_risk_asset = _scoring.pick_risk_asset
 realized_vol = _scoring.realized_vol
 ts_momentum = _scoring.ts_momentum
 
-CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache", "etf_daily")
 REPORT_PATH = os.path.join(os.path.dirname(__file__), "ablate_adm_knobs.md")
 
 IS_START = "2018-01-02"
@@ -81,36 +82,6 @@ def build_grid():
 
 VARIANTS = build_grid()
 UNIVERSE = tuple(list(RISK) + [BOND])
-
-
-# ---------------------------------------------------------------------------
-# Data layer: load exactly the frozen ADM universe
-# ---------------------------------------------------------------------------
-def load_panel():
-    panel = {}
-    for code in UNIVERSE:
-        path = os.path.join(CACHE_DIR, code + ".parquet")
-        if not os.path.exists(path):
-            raise RuntimeError("missing cached bars for %s" % code)
-        frame = pd.read_parquet(path)
-        frame = (
-            frame.dropna(subset=["close"])
-            .sort_values("date")
-            .drop_duplicates("date")
-        )
-        close = frame["close"].to_numpy(dtype=float)
-        volume = frame["volume"].to_numpy(dtype=float)
-        amount = frame["amount"].to_numpy(dtype=float)
-        amount = np.where(np.isfinite(amount), amount, close * volume)
-        panel[code] = {
-            "dates": frame["date"].to_numpy(dtype="datetime64[ns]"),
-            "high": frame["high"].to_numpy(dtype=float),
-            "low": frame["low"].to_numpy(dtype=float),
-            "close": close,
-            "volume": volume,
-            "amount": amount,
-        }
-    return panel
 
 
 def build_counts(panel, calendar):

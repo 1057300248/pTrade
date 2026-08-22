@@ -28,6 +28,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from etf_panel import load_panel
+
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -102,34 +104,19 @@ def _safe_ratio(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
     return result.replace([np.inf, -np.inf], np.nan)
 
 
-def _load_one(code: str) -> pd.DataFrame:
-    path = CACHE_DIR / (code + ".parquet")
-    if not path.exists():
-        raise FileNotFoundError(path)
-    frame = pd.read_parquet(path)
-    required = {"date", "high", "low", "close", "volume", "amount"}
-    missing = required.difference(frame.columns)
-    if missing:
-        raise ValueError("%s missing %s" % (path, sorted(missing)))
-    frame = frame.loc[:, sorted(required)].copy()
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
-    frame = (
-        frame.dropna(subset=["date", "close"])
-        .sort_values("date")
-        .drop_duplicates("date", keep="last")
-        .set_index("date")
-    )
-    for column in ("high", "low", "close", "volume", "amount"):
-        frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    frame["amount"] = frame["amount"].where(
-        frame["amount"].notna(), frame["close"] * frame["volume"]
-    )
-    return frame
-
-
 def load_daily_panel() -> Dict[str, pd.DataFrame]:
     codes = tuple(dict.fromkeys(GROWTH + SEPARATE_CODES + (MARKET, SIZE)))
-    panel = {code: _load_one(code) for code in codes}
+    array_panel = load_panel(CACHE_DIR, codes=codes)
+    panel = {
+        code: pd.DataFrame(
+            {
+                column: bars[column]
+                for column in ("high", "low", "close", "volume", "amount")
+            },
+            index=pd.DatetimeIndex(bars["dates"], name="date"),
+        )
+        for code, bars in array_panel.items()
+    }
     if tuple(LIVE_GROWTH) != GROWTH:
         raise AssertionError("GROWTH universe changed during run")
     return panel

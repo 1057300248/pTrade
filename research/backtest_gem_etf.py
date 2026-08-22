@@ -22,6 +22,8 @@ import time
 import numpy as np
 import pandas as pd
 
+from etf_panel import load_panel
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
@@ -66,7 +68,6 @@ ts_momentum = _strategy.ts_momentum
 # Tiny constants get fallbacks so a missing symbol never breaks the run.
 STATE_LOCK = getattr(_strategy, "STATE_LOCK", "lockdown")
 
-CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache", "etf_daily")
 START = "2018-01-01"
 END = "2026-08-21"
 IS_END = "2021-12-31"
@@ -83,32 +84,6 @@ WINDOWS = (
     ("2024-02-01", "2024-02-29"),
     ("2026-07-01", "2026-07-31"),
 )
-
-
-# ---------------------------------------------------------------------------
-# Data layer: per-code numpy arrays + O(1) "bars up to date" indexing
-# ---------------------------------------------------------------------------
-def load_panel():
-    panel = {}
-    for name in sorted(os.listdir(CACHE_DIR)):
-        if not name.endswith(".parquet"):
-            continue
-        code = name[: -len(".parquet")]
-        df = pd.read_parquet(os.path.join(CACHE_DIR, name))
-        df = df.dropna(subset=["close"]).sort_values("date").drop_duplicates("date")
-        close = df["close"].to_numpy(dtype=float)
-        volume = df["volume"].to_numpy(dtype=float)
-        amount = df["amount"].to_numpy(dtype=float)
-        amount = np.where(np.isfinite(amount), amount, close * volume)
-        panel[code] = {
-            "dates": df["date"].to_numpy(dtype="datetime64[ns]"),
-            "high": df["high"].to_numpy(dtype=float),
-            "low": df["low"].to_numpy(dtype=float),
-            "close": close,
-            "volume": volume,
-            "amount": amount,
-        }
-    return panel
 
 
 def build_counts(panel, calendar):

@@ -29,6 +29,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from etf_panel import load_panel
+
 
 HERE = Path(__file__).resolve().parent
 CACHE_DIR = HERE / "cache" / "etf_daily"
@@ -89,39 +91,20 @@ DISPLAY_NAME = {
 }
 
 
-def _load_one(path: Path) -> pd.DataFrame:
-    frame = pd.read_parquet(path)
-    required = {"date", "high", "low", "close", "volume", "amount"}
-    missing = required.difference(frame.columns)
-    if missing:
-        raise ValueError("%s is missing columns: %s" % (path, sorted(missing)))
-    frame = frame.loc[:, sorted(required)].copy()
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
-    frame = (
-        frame.dropna(subset=["date", "close"])
-        .sort_values("date")
-        .drop_duplicates("date", keep="last")
-        .set_index("date")
-    )
-    for column in ("high", "low", "close", "volume", "amount"):
-        frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    frame["amount"] = frame["amount"].where(
-        frame["amount"].notna(), frame["close"] * frame["volume"]
-    )
-    return frame
-
-
 def load_daily_panel() -> Dict[str, pd.DataFrame]:
     """Load all ETF files, excluding the standalone 000300 index series."""
-    paths = sorted(CACHE_DIR.glob("*.parquet"))
-    if not paths:
-        raise FileNotFoundError("no parquet files under %s" % CACHE_DIR)
+    array_panel = load_panel(CACHE_DIR)
     panel = {}
-    for path in paths:
-        code = path.stem
+    for code, bars in array_panel.items():
         if code in NON_ETF_FILES:
             continue
-        panel[code] = _load_one(path)
+        panel[code] = pd.DataFrame(
+            {
+                column: bars[column]
+                for column in ("high", "low", "close", "volume", "amount")
+            },
+            index=pd.DatetimeIndex(bars["dates"], name="date"),
+        )
     missing_refs = {MARKET, SIZE}.difference(panel)
     if missing_refs:
         raise ValueError("missing required reference ETFs: %s" % sorted(missing_refs))
