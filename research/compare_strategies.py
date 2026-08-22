@@ -19,6 +19,7 @@ STRATEGIES = (
     ("RMDC", "backtest_rmdc_etf"),
     ("Combo", "backtest_combo_etf"),
     ("GEM", "backtest_gem_etf"),
+    ("ADM", "backtest_adm_etf"),
 )
 MONTHS = ("2024-02", "2026-07")
 START = "2018-01-01"
@@ -288,15 +289,14 @@ def _write_markdown(rows):
     lines = [
         "# ETF strategy comparison",
         "",
-        "| strategy | sample | CAGR | MDD | Sharpe | 2024-02 | 2026-07 | IS CAGR | OOS CAGR |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| strategy | CAGR | MDD | Sharpe | 2024-02 | 2026-07 | IS CAGR | OOS CAGR |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
-            "| {strategy} | {sample} | {cagr} | {mdd} | {sharpe:.2f} | "
+            "| {strategy} | {cagr} | {mdd} | {sharpe:.2f} | "
             "{feb} | {jul} | {is_cagr} | {oos_cagr} |".format(
                 strategy=row["strategy"],
-                sample=row["sample"],
                 cagr=_percent(row["cagr"]),
                 mdd=_percent(row["mdd"]),
                 sharpe=row["sharpe"],
