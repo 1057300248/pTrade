@@ -15,6 +15,10 @@ Wave 2 已于 2026-08-22 执行，累计 **N=16**。结果见
 **不要开 RL/ML/NN/树训练**；下一步是纸面 `TRANCHE-N2`，再按预登记跑
 `max(vol20,vol60)` 与黄金袖仓，禁止新自由网格。
 
+第三方「四象擒龙」开发笔记对照见
+[`../research/third_party_notes_vs_ours.md`](../research/third_party_notes_vs_ours.md)：
+复权与 T+1 我们已具备；20 日动量、持有 4、买入价 7% 止损**整包拒绝**。
+
 ## 1. 现状（一句话）
 
 在位者是 **ADM（进取，OOS 8.17%）与 RMDC（保守，OOS 6.44%，2026-07 −0.71%）**；
