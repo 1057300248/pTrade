@@ -130,6 +130,12 @@ def main(argv=None):
     parser.add_argument("--force", action="store_true", help="Refetch even if cache is current")
     parser.add_argument("--probe", action="store_true", help="Ping each source on one code and exit")
     parser.add_argument("--codes", default=None, help="Subset, e.g. 510300.SS,159915.SZ")
+    parser.add_argument(
+        "--min-rows",
+        type=int,
+        default=400,
+        help="Ignore a source whose series is shorter than this (baostock ETFs are often 2026-only)",
+    )
     args = parser.parse_args(argv)
 
     sources = resolve_sources(args.sources)
@@ -159,7 +165,9 @@ def main(argv=None):
         if not args.force and _reuse_current_outputs(code, cache_path, sim_path):
             summary.append((code, name, 0, None, str(TARGET_LAST_DATE.date()), "existing"))
             continue
-        frame, source = fetch_one(code, sina_symbol, sources=sources)
+        frame, source = fetch_one(
+            code, sina_symbol, sources=sources, min_rows=args.min_rows
+        )
         if frame.empty:
             print("FAIL %s %s" % (code, name))
             summary.append((code, name, 0, None, None, None))

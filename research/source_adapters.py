@@ -561,15 +561,19 @@ def fetch_free_stockdb(code, sina_symbol=None, start="20160101", end=None):
         frame = _load_stockdb_local(code, directory)
         if not frame.empty:
             return frame
+    http_error = None
     try:
         frame = _fetch_stockdb_http(code, start, end)
         if not frame.empty:
             return frame
-    except Exception:
+    except Exception as exc:
+        http_error = exc
         frame = pd.DataFrame(columns=SCHEMA)
     sdk_frame = _fetch_stockdb_sdk(code, start, end)
     if not sdk_frame.empty:
         return sdk_frame
+    if http_error is not None:
+        raise http_error
     return frame
 
 
@@ -583,7 +587,14 @@ SOURCE_FETCHERS = {
 }
 
 
-def fetch_one(code, sina_symbol=None, sources=None):
+def is_usable_research_bars(frame, min_rows=400):
+    """Reject empty/tiny series so a 2026-only feed cannot overwrite an 8y cache."""
+    if frame is None or getattr(frame, "empty", True):
+        return False
+    return int(len(frame)) >= int(min_rows)
+
+
+def fetch_one(code, sina_symbol=None, sources=None, min_rows=400):
     last_error = None
     for name in resolve_sources(sources):
         try:
@@ -592,8 +603,13 @@ def fetch_one(code, sina_symbol=None, sources=None):
             print("  %s fail %s %s" % (name, code, exc))
             last_error = exc
             continue
-        if frame is not None and not frame.empty:
+        if is_usable_research_bars(frame, min_rows=min_rows):
             return normalize_bars(frame), name
+        if frame is not None and not frame.empty:
+            print(
+                "  %s skip %s rows=%d < min_rows=%d"
+                % (name, code, len(frame), min_rows)
+            )
         time.sleep(PAUSE_SEC)
     if last_error is not None:
         print("  all sources failed %s last=%s" % (code, last_error))

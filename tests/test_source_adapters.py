@@ -144,10 +144,30 @@ def test_fetch_one_falls_through_empty_then_uses_next_source(monkeypatch):
     monkeypatch.setitem(adapters.SOURCE_FETCHERS, "baostock", boom)
     monkeypatch.setitem(adapters.SOURCE_FETCHERS, "ths", ok)
 
-    frame, source = fetch_one("510300.SS", "sh510300", sources=["sina", "baostock", "ths"])
+    frame, source = fetch_one(
+        "510300.SS", "sh510300", sources=["sina", "baostock", "ths"], min_rows=1
+    )
     assert source == "ths"
     assert len(frame) == 3
     assert calls == ["sina", "baostock", "ths"]
+
+
+def test_fetch_one_skips_short_series_so_recent_only_feeds_cannot_win(monkeypatch):
+    import research.source_adapters as adapters
+
+    def short(_code, sina_symbol=None):
+        return _sample_bars(n=3)
+
+    def long(_code, sina_symbol=None):
+        return _sample_bars(n=5, start="2018-01-02")
+
+    monkeypatch.setitem(adapters.SOURCE_FETCHERS, "baostock", short)
+    monkeypatch.setitem(adapters.SOURCE_FETCHERS, "ths", long)
+    frame, source = fetch_one(
+        "510300.SS", "sh510300", sources=["baostock", "ths"], min_rows=4
+    )
+    assert source == "ths"
+    assert len(frame) == 5
 
 
 def _ths_opener_stub():
@@ -280,6 +300,21 @@ def test_fetch_free_stockdb_http_parses_engine_json(monkeypatch):
     monkeypatch.setattr("research.source_adapters._fetch_stockdb_sdk", lambda *args, **kwargs: pd.DataFrame(columns=SCHEMA))
     frame = fetch_free_stockdb("510300.SS")
     assert frame["close"].iloc[0] == 1.1
+
+
+def test_fetch_free_stockdb_surfaces_http_error_when_engine_is_down(monkeypatch):
+    monkeypatch.delenv("FREE_STOCKDB_DIR", raising=False)
+
+    def boom(*args, **kwargs):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("research.source_adapters._http_get", boom)
+    monkeypatch.setattr(
+        "research.source_adapters._fetch_stockdb_sdk",
+        lambda *args, **kwargs: pd.DataFrame(columns=SCHEMA),
+    )
+    with pytest.raises(OSError, match="connection refused"):
+        fetch_free_stockdb("510300.SS")
 
 
 def test_fetch_cli_selects_universe_from_comma_string():

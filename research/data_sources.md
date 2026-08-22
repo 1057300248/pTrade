@@ -21,8 +21,8 @@
 | 同花顺**免费**日 K | `d.10jqka.com.cn/v6/line/hs_XXXXXX/01/{all,year}.js`，免 iFinD 账号。可能要 `hexin-v` 或被反爬拦。 | 研究适配器 `ths`。不是 iFinD / HiThink。 |
 | 同花顺 iFinD / HiThink | 客户端或 API Key，不是免鉴权源。 | 不接入研究脚本或实盘策略。 |
 | free-stockdb | [hello245m/free-stockdb](https://github.com/hello245m/free-stockdb) 本地 C++ 引擎，默认 `127.0.0.1:7899`。 | 研究适配器：`FREE_STOCKDB_DIR` 本地 dump、HTTP、可选 Python SDK。本仓库不捆绑数据。 |
-| baostock | `query_history_k_data_plus`，代码 `sh.510300` / `sz.159915`，`adjustflag=3` 不复权。需 `pip install baostock`。 | 研究回退链。ETF 覆盖以实际返回为准。 |
-| akshare / aakshare | `fund_etf_hist_em`（ETF）/ `stock_zh_index_daily`（指数）。东财接口在部分网络会 `RemoteDisconnected`。 | 研究回退链；失败则跳过，不假装成功。 |
+| baostock | `query_history_k_data_plus`，代码 `sh.510300` / `sz.159915`，`adjustflag=3` 不复权。需 `pip install baostock`。个股历史完整；**本环境 ETF 只返回 2026-01 起约 154 根**。 | 研究回退链。默认 `min_rows=400`，过短序列不会写成 8 年缓存。 |
+| akshare / aakshare | `fund_etf_hist_em`（ETF）/ `stock_zh_index_daily`（指数）。东财接口在部分网络会 `RemoteDisconnected`。 | 研究回退链；失败则跳过，不假装成功。本环境 510300 探测成功（2012-05-28 起）。 |
 | 新浪 | 日 K 接口。 | 默认第一源：`CN_MarketData.getKLineData`。 |
 | 腾讯 | `fqkline`。 | 新浪失败后的第二源。 |
 | mootdx | 通达信 TCP 7709。 | 可手动用于研究，不是脚本默认项。 |
@@ -61,6 +61,19 @@ python research/fetch_free_etf_bars.py --sources ths,baostock,aakshare,free-stoc
 export FREE_STOCKDB_URL=http://127.0.0.1:7899
 export FREE_STOCKDB_DIR=/path/to/stockdb/dump
 ```
+
+## 本环境探测（2026-08-22，`510300.SS`）
+
+| 源 | 结果 | 行数 | 区间 |
+| --- | --- | ---: | --- |
+| sina | 通 | 2500 | 2016-05-10 .. 2026-08-21 |
+| tencent | 通 | 800 | 2023-05-09 .. 2026-08-21 |
+| baostock | 通，但 ETF 过短 | 154 | 2026-01-05 .. 2026-08-21 |
+| akshare | 通 | 3461 | 2012-05-28 .. 2026-08-21 |
+| ths（同花顺免费） | 通 | 2584 | 2016-01-04 .. 2026-08-21 |
+| free-stockdb | 本 VM 无本地引擎 | 0 | — |
+
+默认写入缓存仍要求 `min_rows>=400`，因此 baostock 的 154 根不会覆盖研究缓存。要强行用短序列：`--sources baostock --min-rows 1`。
 
 可选环境变量：
 
