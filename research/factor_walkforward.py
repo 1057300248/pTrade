@@ -186,8 +186,6 @@ def build_factor_panel(daily: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     market_return = np.log(daily[MARKET]["close"]).diff().rename("market")
     size_return = np.log(daily[SIZE]["close"]).diff()
     size_spread = (size_return - market_return).rename("size_spread")
-    gold_mom63 = daily[GOLD]["close"].pct_change(63)
-    bond_mom63 = daily[BOND]["close"].pct_change(63)
 
     records = []
     for code, source in sorted(daily.items()):
@@ -217,12 +215,6 @@ def build_factor_panel(daily: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
         features["corr_to_300_60d"] = asset_return.rolling(
             60, min_periods=45
         ).corr(aligned_market_return)
-        features["gold_spread"] = features["mom63"] - _reference_series(
-            gold_mom63, frame.index
-        )
-        features["bond_spread"] = features["mom63"] - _reference_series(
-            bond_mom63, frame.index
-        )
 
         regression_frame = pd.concat(
             [
@@ -268,6 +260,22 @@ def build_factor_panel(daily: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     panel["turnover_z"] = _safe_ratio(
         panel["_turnover_ratio"] - turnover_mean, turnover_std
     )
+
+    # Spreads use one common weekly reference value for the entire
+    # cross-section. Individual ETFs may have a stale final bar in a week;
+    # that must not also move the benchmark date for just that ETF.
+    gold_by_week = (
+        panel.loc[panel["code"].eq(GOLD), ["week_order", "mom63"]]
+        .drop_duplicates("week_order")
+        .set_index("week_order")["mom63"]
+    )
+    bond_by_week = (
+        panel.loc[panel["code"].eq(BOND), ["week_order", "mom63"]]
+        .drop_duplicates("week_order")
+        .set_index("week_order")["mom63"]
+    )
+    panel["gold_spread"] = panel["mom63"] - panel["week_order"].map(gold_by_week)
+    panel["bond_spread"] = panel["mom63"] - panel["week_order"].map(bond_by_week)
     return panel
 
 
