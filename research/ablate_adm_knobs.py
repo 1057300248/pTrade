@@ -430,7 +430,7 @@ def deployment_verdict(results, frozen):
             "primary."
         )
     return (
-        "DEPLOY CANDIDATE: the frozen IS winner passes the specified OOS "
+        "DEPLOY: the frozen IS winner passes the specified OOS "
         "Sharpe-decay rule."
     )
 
