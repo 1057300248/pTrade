@@ -28,10 +28,6 @@ END = "2026-08-21"
 IS_END = "2021-12-31"
 OOS_START = "2022-01-01"
 
-SAMPLE_RE = re.compile(
-    r"backtest\s+(\d{4}-\d{2}-\d{2})\s*(?:\.\.|~|to)\s*(\d{4}-\d{2}-\d{2})",
-    re.IGNORECASE,
-)
 METRICS_RE = re.compile(
     r"strategy\s*:\s*CAGR=\s*([-+]?\d+(?:\.\d+)?)%"
     r".*?MDD=\s*([-+]?\d+(?:\.\d+)?)%"
@@ -206,17 +202,6 @@ def _extract_row(strategy, result, output):
         if sharpe is None:
             sharpe = _as_number(metric_match.group(3))
 
-    sample = _mapping_value(mapping, ("sample", "period", "date_range"))
-    if sample is None:
-        start = _mapping_value(mapping, ("start", "start_date"))
-        end = _mapping_value(mapping, ("end", "end_date"))
-        if start is not None and end is not None:
-            sample = "%s to %s" % (start, end)
-    if sample is None:
-        sample_match = SAMPLE_RE.search(output)
-        if sample_match:
-            sample = "%s to %s" % sample_match.groups()
-
     windows = {}
     for month in MONTHS:
         value = _window_return(mapping, month)
@@ -231,7 +216,6 @@ def _extract_row(strategy, result, output):
     missing = [
         name
         for name, value in (
-            ("sample", sample),
             ("CAGR", cagr),
             ("MDD", mdd),
             ("Sharpe", sharpe),
@@ -242,7 +226,6 @@ def _extract_row(strategy, result, output):
         raise ValueError("missing %s" % ", ".join(missing))
     return {
         "strategy": strategy,
-        "sample": str(sample),
         "cagr": cagr,
         "mdd": mdd,
         "sharpe": sharpe,
@@ -297,7 +280,6 @@ def _benchmark_row():
     oos_perf = subperiod(OOS_START, END)
     return {
         "strategy": "510300 buy-and-hold",
-        "sample": "%s to %s" % (dates[0].date(), dates[-1].date()),
         "cagr": full[0],
         "mdd": full[1],
         "sharpe": full[2],
