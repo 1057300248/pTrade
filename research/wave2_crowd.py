@@ -169,15 +169,20 @@ def crowd_map_for_index(panel, counts, codes, index, percentile,
         # ``history_sessions``; earlier bar counts cannot produce a
         # component value, so they are skipped.
         first = max(MIN_COMPONENT_BARS, count - history_sessions)
-        prior = [
-            crowding_component_values(
-                bars["close"][:prior_count],
-                bars["high"][:prior_count],
-                bars["low"][:prior_count],
-                bars["volume"][:prior_count],
-            )
-            for prior_count in range(first, count)
-        ]
+        cache = crowd_map_for_index._component_cache
+        prior = []
+        for prior_count in range(first, count):
+            key = (id(bars["close"]), prior_count)
+            values = cache.get(key)
+            if values is None:
+                values = crowding_component_values(
+                    bars["close"][:prior_count],
+                    bars["high"][:prior_count],
+                    bars["low"][:prior_count],
+                    bars["volume"][:prior_count],
+                )
+                cache[key] = values
+            prior.append(values)
 
         points = crowding_points_percentile(
             prior, current, percentile, min_obs=min_obs)
@@ -185,3 +190,6 @@ def crowd_map_for_index(panel, counts, codes, index, percentile,
             points = incumbent_fn(closes, highs, lows, volumes)
         crowd[code] = int(points)
     return crowd
+
+
+crowd_map_for_index._component_cache = {}

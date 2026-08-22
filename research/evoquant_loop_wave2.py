@@ -243,6 +243,7 @@ def _weekly_target(panel, counts, index, snapshot, lockdown, config):
         candidate_snapshot["crowds"] = crowd_map_for_index(
             panel,
             counts,
+            list(strategy.RISK),
             index,
             float(config["value"]),
         )
