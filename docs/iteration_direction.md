@@ -15,6 +15,12 @@ Wave 2 已于 2026-08-22 执行，累计 **N=16**。结果见
 **不要开 RL/ML/NN/树训练**；下一步是纸面 `TRANCHE-N2`，再按预登记跑
 `max(vol20,vol60)` 与黄金袖仓，禁止新自由网格。
 
+「回测年化 25%」联网核查见
+[`../research/etf_rotation_25pct_ceiling.md`](../research/etf_rotation_25pct_ceiling.md)：
+公开 25% 靠换分数板；本账不换假设不可达。手点决策支持与新方向见
+[`../research/manual_decision_support_directions.md`](../research/manual_decision_support_directions.md)；
+**不以 25% 选模，不改在位 ETF 池。**
+
 ## 1. 现状（一句话）
 
 在位者是 **ADM（进取，OOS 8.17%）与 RMDC（保守，OOS 6.44%，2026-07 −0.71%）**；
@@ -28,6 +34,7 @@ GEM（OOS 10.41%）维持 UNDER TEST 只观察不转正；两轮因子挖掘（�
 - **加第 5 个因子 / sklearn**：实盘因子 ≤4（规则 4/5/12）；Combo 不复活（规则 11），GEM 不晋级。
 - **LLM 直接改实盘文件**：循环只产出研究提案，`evoquant_loop.py` 的 SHA-256 写保护保留（规则 17；`research/lit_survey_500.md` §What we will actually test next 第 10 条）。
 - **用 OOS 重挑“去黄金”**：VT16-MON-NOGOLD 的 13.71% 是诊断 OOS，不是 IS 胜者，引用它立项即数据窥探（`research/evoquant_candidates.md`）。
+- **用「回测 25%」当选模目标**：卖方/社区 20–30% 与杠杆/商品捷径一律换分数板或换账，见 `etf_rotation_25pct_ceiling.md`。
 
 ## 3. 四条迭代方向（按优先级）
 
