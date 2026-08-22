@@ -8,6 +8,7 @@ import contextlib
 import importlib.util
 import inspect
 import io
+import math
 import os
 import re
 
@@ -17,8 +18,13 @@ OUTPUT = os.path.join(HERE, "compare_strategies.md")
 STRATEGIES = (
     ("RMDC", "backtest_rmdc_etf"),
     ("Combo", "backtest_combo_etf"),
+    ("GEM", "backtest_gem_etf"),
 )
 MONTHS = ("2024-02", "2026-07")
+START = "2018-01-01"
+END = "2026-08-21"
+IS_END = "2021-12-31"
+OOS_START = "2022-01-01"
 
 SAMPLE_RE = re.compile(
     r"backtest\s+(\d{4}-\d{2}-\d{2})\s*(?:\.\.|~|to)\s*(\d{4}-\d{2}-\d{2})",
@@ -34,6 +40,11 @@ WINDOW_RE = re.compile(
     r"window\s+(\d{4}-\d{2})-\d{2}\s*\.\.\s*\d{4}-\d{2}-\d{2}"
     r"\s*:\s*strategy\s+ret=\s*([-+]?\d+(?:\.\d+)?)%",
     re.IGNORECASE,
+)
+SUBPERIOD_RE = re.compile(
+    r"^(IS|OOS)\b[^\n]*\n\s*strategy\s*:\s*CAGR="
+    r"\s*([-+]?\d+(?:\.\d+)?)%",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 
@@ -96,6 +107,11 @@ def _as_number(value, percent=False):
 def _result_mapping(result):
     if not isinstance(result, dict):
         return {}
+    full = result.get("full")
+    if isinstance(full, dict):
+        return full
+    if isinstance(full, (tuple, list)) and len(full) >= 3:
+        return {"cagr": full[0], "mdd": full[1], "sharpe": full[2]}
     if any(key in result for key in ("cagr", "ann", "mdd", "maxdd", "sharpe")):
         return result
     for key in ("strategy", "summary", "stats", "metrics"):
@@ -106,6 +122,8 @@ def _result_mapping(result):
 
 
 def _window_return(mapping, month):
+    if not isinstance(mapping, dict):
+        return None
     for container_name in ("windows", "window_returns", "stress_windows"):
         container = mapping.get(container_name)
         if not isinstance(container, dict):
@@ -123,6 +141,24 @@ def _window_return(mapping, month):
         if value is not None:
             return _as_number(value)
     return None
+
+
+def _subperiod_cagrs(result, output):
+    values = {"is": None, "oos": None}
+    if isinstance(result, dict):
+        for name in values:
+            value = result.get(name)
+            if isinstance(value, dict):
+                value = _mapping_value(value, ("cagr", "ann", "annual_return"))
+            elif isinstance(value, (tuple, list)):
+                value = value[0] if value else None
+            if value is not None:
+                values[name] = _as_number(value)
+    for name, value in SUBPERIOD_RE.findall(output):
+        key = name.lower()
+        if values[key] is None:
+            values[key] = _as_number(value, percent=True)
+    return values
 
 
 def _extract_row(strategy, result, output):
@@ -151,10 +187,16 @@ def _extract_row(strategy, result, output):
         if sample_match:
             sample = "%s to %s" % sample_match.groups()
 
-    windows = {month: _window_return(mapping, month) for month in MONTHS}
+    windows = {}
+    for month in MONTHS:
+        value = _window_return(mapping, month)
+        if value is None:
+            value = _window_return(result, month)
+        windows[month] = value
     for month, value in WINDOW_RE.findall(output):
         if month in windows and windows[month] is None:
             windows[month] = _as_number(value, percent=True)
+    subperiods = _subperiod_cagrs(result, output)
 
     missing = [
         name
@@ -175,6 +217,66 @@ def _extract_row(strategy, result, output):
         "mdd": mdd,
         "sharpe": sharpe,
         "windows": windows,
+        "is_cagr": subperiods["is"],
+        "oos_cagr": subperiods["oos"],
+    }
+
+
+def _benchmark_row():
+    import numpy as np
+    import pandas as pd
+
+    path = os.path.join(HERE, "cache", "etf_daily", "510300.SS.parquet")
+    if not os.path.isfile(path):
+        raise IOError("%s is missing" % path)
+    frame = pd.read_parquet(path)
+    frame = frame.dropna(subset=["date", "close"]).sort_values("date")
+    frame = frame.drop_duplicates("date", keep="last")
+    dates = pd.DatetimeIndex(frame["date"])
+    mask = (dates >= pd.Timestamp(START)) & (dates <= pd.Timestamp(END))
+    dates = dates[mask]
+    navs = frame.loc[mask, "close"].to_numpy(dtype=float)
+    navs = navs / navs[0]
+
+    def perf(sub_navs, sub_dates):
+        years = max((sub_dates[-1] - sub_dates[0]).days / 365.25, 1e-9)
+        cagr = float((sub_navs[-1] / sub_navs[0]) ** (1.0 / years) - 1.0)
+        peak = np.maximum.accumulate(sub_navs)
+        mdd = float(np.min(sub_navs / peak - 1.0))
+        returns = np.diff(sub_navs) / sub_navs[:-1]
+        std = float(np.std(returns, ddof=1)) if len(returns) > 2 else 0.0
+        sharpe = float(np.mean(returns) / std * math.sqrt(252.0)) if std > 0 else 0.0
+        return cagr, mdd, sharpe
+
+    def subperiod(start, end):
+        sub_mask = (dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))
+        sub_navs = navs[sub_mask]
+        if len(sub_navs) < 2:
+            return None
+        return perf(sub_navs / sub_navs[0], dates[sub_mask])
+
+    full = perf(navs, dates)
+    windows = {}
+    for month in MONTHS:
+        start = month + "-01"
+        end = (pd.Timestamp(start) + pd.offsets.MonthEnd(0)).strftime("%Y-%m-%d")
+        window = subperiod(start, end)
+        sub_mask = (dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))
+        sub_navs = navs[sub_mask]
+        windows[month] = (
+            float(sub_navs[-1] / sub_navs[0] - 1.0) if window is not None else None
+        )
+    is_perf = subperiod(START, IS_END)
+    oos_perf = subperiod(OOS_START, END)
+    return {
+        "strategy": "510300 buy-and-hold",
+        "sample": "%s to %s" % (dates[0].date(), dates[-1].date()),
+        "cagr": full[0],
+        "mdd": full[1],
+        "sharpe": full[2],
+        "windows": windows,
+        "is_cagr": None if is_perf is None else is_perf[0],
+        "oos_cagr": None if oos_perf is None else oos_perf[0],
     }
 
 
@@ -186,13 +288,13 @@ def _write_markdown(rows):
     lines = [
         "# ETF strategy comparison",
         "",
-        "| strategy | sample | CAGR | MDD | Sharpe | 2024-02 | 2026-07 |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        "| strategy | sample | CAGR | MDD | Sharpe | 2024-02 | 2026-07 | IS CAGR | OOS CAGR |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
             "| {strategy} | {sample} | {cagr} | {mdd} | {sharpe:.2f} | "
-            "{feb} | {jul} |".format(
+            "{feb} | {jul} | {is_cagr} | {oos_cagr} |".format(
                 strategy=row["strategy"],
                 sample=row["sample"],
                 cagr=_percent(row["cagr"]),
@@ -200,6 +302,8 @@ def _write_markdown(rows):
                 sharpe=row["sharpe"],
                 feb=_percent(row["windows"]["2024-02"]),
                 jul=_percent(row["windows"]["2026-07"]),
+                is_cagr=_percent(row["is_cagr"]),
+                oos_cagr=_percent(row["oos_cagr"]),
             )
         )
     lines.extend(
@@ -234,6 +338,11 @@ def main():
             rows.append(_extract_row(strategy, result, output))
         except Exception as exc:
             print("Skipping %s: backtest failed: %s" % (strategy, exc))
+
+    try:
+        rows.append(_benchmark_row())
+    except Exception as exc:
+        print("Skipping 510300 buy-and-hold: %s" % exc)
 
     if not rows:
         raise RuntimeError("no strategy produced a complete result row")
