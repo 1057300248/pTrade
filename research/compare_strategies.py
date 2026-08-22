@@ -20,6 +20,7 @@ STRATEGIES = (
     ("Combo", "backtest_combo_etf"),
     ("GEM", "backtest_gem_etf"),
     ("ADM", "backtest_adm_etf"),
+    ("Dual-layer", "backtest_dual_layer_etf"),
 )
 MONTHS = ("2024-02", "2026-07")
 START = "2018-01-01"
