@@ -173,7 +173,9 @@ def eligible(codes, snap, require_trend):
             continue
         if snap["ret63"].get(code, 0.0) <= 0.0:
             continue
-        if snap["ret63"].get(code, 0.0) < snap["bond_ret"]:
+        # Live _eligible() applies the bond hurdle only to the growth sleeve
+        # (require_trend); diversifiers just need a positive 63d return.
+        if require_trend and snap["ret63"].get(code, 0.0) < snap["bond_ret"]:
             continue
         ranked.append((code, score * max(snap["tq"].get(code, 0.0), 0.01)))
     ranked.sort(key=lambda item: item[1], reverse=True)
