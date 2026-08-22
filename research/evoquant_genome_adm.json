@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "strategy": "ADM",
+  "source": "ptrade_adm_etf.py",
+  "purpose": "Research-only controlled verification; never auto-apply live edits.",
+  "layers": [
+    {
+      "name": "universe.risk",
+      "type": "security_code_list",
+      "mutable": false,
+      "value": [
+        "510300.SS",
+        "159915.SZ",
+        "513100.SS",
+        "518880.SS"
+      ]
+    },
+    {
+      "name": "universe.bond",
+      "type": "security_code",
+      "mutable": false,
+      "value": "511010.SS"
+    },
+    {
+      "name": "universe.gold_overlay",
+      "type": "boolean",
+      "mutable": true,
+      "incumbent": true,
+      "candidate_values": [
+        true,
+        false
+      ],
+      "definition": "When false, 518880.SS is ineligible as the weekly risk winner."
+    },
+    {
+      "name": "signal.ts_momentum",
+      "type": "integer_tuple",
+      "mutable": false,
+      "value": {
+        "lookback": 252,
+        "skip": 21,
+        "fallback_lookback": 126,
+        "fallback_skip": 5
+      }
+    },
+    {
+      "name": "signal.month_gate",
+      "type": "boolean",
+      "mutable": true,
+      "incumbent": true,
+      "candidate_values": [
+        true,
+        false
+      ],
+      "definition": "Require latest 21-session total return above zero."
+    },
+    {
+      "name": "filter.crowding_block",
+      "type": "integer",
+      "mutable": false,
+      "value": 4
+    },
+    {
+      "name": "allocation.vol_target",
+      "type": "float",
+      "mutable": true,
+      "incumbent": 0.16,
+      "candidate_values": [
+        0.12,
+        0.16
+      ]
+    },
+    {
+      "name": "overlay.crash",
+      "type": "float_tuple",
+      "mutable": false,
+      "value": {
+        "single_day": 0.06,
+        "three_day": 0.08,
+        "lockdown_days": 3
+      }
+    },
+    {
+      "name": "execution",
+      "type": "execution_contract",
+      "mutable": false,
+      "value": {
+        "signal": "T close",
+        "fill": "T+1 close",
+        "one_way_cost": 0.0008,
+        "rebalance": "ISO weekly"
+      }
+    }
+  ],
+  "search": {
+    "declared_trials": 8,
+    "maximum_candidates": 8,
+    "selection_period": [
+      "2018-01-02",
+      "2021-12-31"
+    ],
+    "selection_metric": "IS Sharpe, then IS CAGR, MDD, incumbent-layer tie breaks",
+    "frozen_oos_period": [
+      "2022-01-04",
+      "2026-08-21"
+    ],
+    "stress_windows_are_training_targets": false,
+    "lookback_grid_allowed": false
+  },
+  "promotion": {
+    "oos_sharpe_decay_floor": 0.5,
+    "minimum_2024_02_return": -0.08,
+    "minimum_2026_07_return": -0.1,
+    "must_beat_510300_oos_cagr": true
+  }
+}
