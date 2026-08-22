@@ -88,7 +88,7 @@ def _as_number(value, percent=False):
         if is_percent:
             text = text[:-1]
         number = float(text)
-        return number / 100.0 if is_percent else number
+        return number / 100.0 if is_percent or percent else number
     number = float(value)
     return number / 100.0 if percent else number
 
