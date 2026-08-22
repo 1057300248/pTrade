@@ -14,14 +14,14 @@ import sys
 import numpy as np
 import pandas as pd
 
-from research.etf_panel import load_panel
-
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from research.etf_panel import load_panel
 
 
 def _import_scoring():
-    if ROOT not in sys.path:
-        sys.path.insert(0, ROOT)
     import ptrade_adm_etf
     return ptrade_adm_etf
 
