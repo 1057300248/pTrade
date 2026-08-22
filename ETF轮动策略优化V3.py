@@ -42,8 +42,9 @@ def initialize(context):
     # 設置基準為滬深300
     set_benchmark('000300.SS')
     # 設置佣金和滑點 (回測用)
-    set_commission(commission_ratio=0.0003, min_commission=5)  # 萬三佣金，最低5元
-    set_slippage(slippage=0.002)  # 0.2%的滑點
+    if not is_trade():
+        set_commission(commission_ratio=0.0003, min_commission=5)  # 萬三佣金，最低5元
+        set_slippage(slippage=0.002)  # 0.2%的滑點
     # 初始化一些記錄變量
     g.last_rank = []  # 記錄上一期評分結果
     

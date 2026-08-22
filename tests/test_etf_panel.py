@@ -1,0 +1,94 @@
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from research.etf_panel import detect_jumps, load_panel
+from research.prepare_simtradelab_data import regenerate
+
+
+CACHE_DIR = Path(__file__).resolve().parents[1] / "research" / "cache" / "etf_daily"
+
+
+def test_detect_jumps_and_stack_multiple_adjustments(tmp_path):
+    dates = pd.to_datetime(
+        ["2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"]
+    )
+    close = np.array([100.0, 20.0, 22.0, 44.0])
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "open": close * 0.99,
+            "high": close * 1.01,
+            "low": close * 0.98,
+            "close": close,
+            "volume": [100.0, 500.0, 400.0, 200.0],
+            "amount": [10000.0, 10000.0, 8800.0, 8800.0],
+        }
+    )
+    frame.to_parquet(tmp_path / "TEST.SS.parquet", index=False)
+
+    assert detect_jumps(close) == [1, 3]
+    bars = load_panel(tmp_path)["TEST.SS"]
+
+    assert np.allclose(bars["close"], [40.0, 40.0, 44.0, 44.0])
+    assert np.allclose(bars["volume"], [250.0, 250.0, 200.0, 200.0])
+    assert np.array_equal(bars["amount"], frame["amount"].to_numpy(dtype=float))
+    adjusted_returns = bars["close"][1:] / bars["close"][:-1] - 1.0
+    assert np.all(np.abs(adjusted_returns) < 0.22)
+
+
+def test_cached_513100_split_is_back_adjusted():
+    path = CACHE_DIR / "513100.SS.parquet"
+    assert path.is_file(), "required cached 513100 bars are missing"
+
+    raw = pd.read_parquet(path, columns=["date", "close"])
+    raw["date"] = pd.to_datetime(raw["date"])
+    raw = raw.sort_values("date").drop_duplicates("date", keep="last")
+    split_date = pd.Timestamp("2022-01-14")
+    before_row = raw.loc[raw["date"] < split_date].iloc[-1]
+    after_row = raw.loc[raw["date"] == split_date].iloc[0]
+    assert before_row["date"] == pd.Timestamp("2022-01-12")
+    before = before_row["close"]
+    after = after_row["close"]
+    raw_return = float(after / before - 1.0)
+    assert raw_return < -0.75
+
+    bars = load_panel(CACHE_DIR, codes=["513100.SS"])["513100.SS"]
+    dates = pd.DatetimeIndex(bars["dates"])
+    before_position = dates.get_loc(before_row["date"])
+    after_position = dates.get_loc(split_date)
+    adjusted_return = float(
+        bars["close"][after_position] / bars["close"][before_position] - 1.0
+    )
+
+    assert after_position in detect_jumps(raw["close"].to_numpy(dtype=float))
+    assert abs(adjusted_return) < 0.22
+
+
+def test_simtradelab_preparer_writes_adjusted_ohlc(tmp_path):
+    cache_dir = tmp_path / "cache"
+    out_dir = tmp_path / "simtradelab"
+    cache_dir.mkdir()
+    raw = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2022-01-12", "2022-01-14"]),
+            "open": [90.0, 19.0],
+            "high": [110.0, 21.0],
+            "low": [80.0, 18.0],
+            "close": [100.0, 20.0],
+            "volume": [100.0, 500.0],
+            "amount": [10000.0, 10000.0],
+        }
+    )
+    raw.to_parquet(cache_dir / "TEST.SS.parquet", index=False)
+
+    assert regenerate(cache_dir, out_dir) == {"TEST.SS": 2}
+    prepared = pd.read_parquet(out_dir / "TEST.SS.parquet")
+
+    assert np.allclose(prepared["open"], [18.0, 19.0])
+    assert np.allclose(prepared["high"], [22.0, 21.0])
+    assert np.allclose(prepared["low"], [16.0, 18.0])
+    assert np.allclose(prepared["close"], [20.0, 20.0])
+    assert np.allclose(prepared["volume"], [500.0, 500.0])
+    assert np.array_equal(prepared["amount"], raw["amount"])

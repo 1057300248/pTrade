@@ -1,0 +1,3 @@
+# Research-only clients. Live ptrade_*.py files must not import these.
+baostock>=0.8.8
+akshare>=1.14.0

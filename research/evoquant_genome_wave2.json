@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "wave": 2,
+  "strategy": "ADM",
+  "status": "EXECUTED_2026-08-22_RESEARCH_ONLY_NO_LIVE_EDIT",
+  "research_only": true,
+  "auto_apply_live_edits": false,
+  "proposed_fields": [
+    {
+      "candidate_id": "W2-CROWD",
+      "name": "crowding_percentile",
+      "type": "float",
+      "is_grid": [
+        0.9,
+        0.95
+      ],
+      "is_grid_size": 2,
+      "selection_period": [
+        "2018-01-02",
+        "2021-12-31"
+      ],
+      "definition": "Causal adverse-tail percentile for each of the four existing RMDC crowding components; aggregate blocking remains 4 of 4.",
+      "fixed_implementation": {
+        "history_sessions": 1250,
+        "minimum_prior_observations": 252,
+        "exclude_current_observation": true,
+        "upper_tail_components": [
+          "volume_heat",
+          "price_extension",
+          "amplitude"
+        ],
+        "lower_tail_components": [
+          "price_volume_correlation"
+        ],
+        "pre_warmup_behavior": "use incumbent fixed-threshold crowding_points"
+      }
+    },
+    {
+      "candidate_id": "W2-TRANCHE",
+      "name": "n_tranches",
+      "type": "integer",
+      "is_grid": [
+        2,
+        3,
+        4
+      ],
+      "is_grid_size": 3,
+      "selection_period": [
+        "2018-01-02",
+        "2021-12-31"
+      ],
+      "definition": "Split each frozen weekly target transition into equal gap-closing tranches over consecutive closes.",
+      "fixed_implementation": {
+        "signal_refresh_between_tranches": false,
+        "tranche_fraction": "1 / n_tranches of the original target transition",
+        "crash_overlay_bypasses_tranches": true,
+        "transaction_cost_applied_per_tranche": true
+      }
+    },
+    {
+      "candidate_id": "W2-BREADTH",
+      "name": "breadth_cut",
+      "type": "float",
+      "is_grid": [
+        0.25,
+        0.5,
+        0.75
+      ],
+      "is_grid_size": 3,
+      "selection_period": [
+        "2018-01-02",
+        "2021-12-31"
+      ],
+      "definition": "At weekly scoring, force the incumbent 95% bond target when the fraction of four RISK assets passing month_gate is below breadth_cut.",
+      "fixed_implementation": {
+        "denominator": 4,
+        "comparison": "breadth < breadth_cut",
+        "risk_signal": "existing 21-session month_gate",
+        "forced_target": {
+          "511010.SS": 0.95
+        },
+        "crash_overlay_unchanged": true
+      }
+    }
+  ],
+  "trial_accounting": {
+    "candidate_families": 3,
+    "one_field_at_a_time": true,
+    "cartesian_product": false,
+    "wave2_is_grid_sizes": {
+      "W2-CROWD": 2,
+      "W2-TRANCHE": 3,
+      "W2-BREADTH": 3
+    },
+    "wave2_declared_trials": 8,
+    "wave1_declared_trials": 8,
+    "cumulative_declared_trials_after_wave2": 16
+  },
+  "freeze_protocol": {
+    "family_selection_metric": "IS Sharpe, then IS CAGR, then least-negative IS MDD, then lower field value",
+    "oos_period": [
+      "2022-01-04",
+      "2026-08-21"
+    ],
+    "oos_repick_forbidden": true,
+    "stress_windows_are_training_targets": false,
+    "stress_windows": [
+      "2024-02",
+      "2026-07"
+    ]
+  }
+}
