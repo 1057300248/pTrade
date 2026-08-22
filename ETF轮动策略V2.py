@@ -157,11 +157,12 @@ def buy_stocks(context, data, market_data, target_list):
                                 log.info(buyInfo)
                                 g.last_buy_prices[symbol] = limit_price
                                 if is_trade():
-                                    send_email('15228207@qq.com', ['15228207@qq.com'], 'wrmmhpwuutdfcbcd', info=buyInfo,  subject="pTrade通知，开仓买入！！！")
+                                    # 旧授权码已从仓库移除，请在 QQ 邮箱作废后填入新授权码。
+                                    send_email('15228207@qq.com', ['15228207@qq.com'], 'YOUR_SMTP_AUTH_CODE', info=buyInfo,  subject="pTrade通知，开仓买入！！！")
         except Exception as e:
             log.error("买入失败: %s" % str(e))
             if is_trade():
-                send_email('15228207@qq.com', ['15228207@qq.com'], 'wrmmhpwuutdfcbcd', info=f"买入标的{str(e)} 失败！！！",  subject="pTrade通知，策略执行失败！！！")
+                send_email('15228207@qq.com', ['15228207@qq.com'], 'YOUR_SMTP_AUTH_CODE', info=f"买入标的{str(e)} 失败！！！",  subject="pTrade通知，策略执行失败！！！")
             raise e               
 def get_current_positions_list():
     try:
@@ -191,7 +192,7 @@ def get_symbols_tobe_clear(target_list):
     except Exception as e:
         log.error("获取需要清仓的标的列表失败: %s" % str(e))
         if is_trade():
-            send_email('15228207@qq.com', ['15228207@qq.com'], 'wrmmhpwuutdfcbcd', info=f"获取清仓标的 {str(e)} 失败！！！",  subject="pTrade通知，获取清仓标的失败！！！")
+            send_email('15228207@qq.com', ['15228207@qq.com'], 'YOUR_SMTP_AUTH_CODE', info=f"获取清仓标的 {str(e)} 失败！！！",  subject="pTrade通知，获取清仓标的失败！！！")
         
         return []
         
@@ -226,11 +227,11 @@ def clear_holdings(stock_list_to_cleared, data):
                 if symbol in g.last_buy_prices: # 删除买入价记录
                     del g.last_buy_prices[symbol]
                 if is_trade():
-                    send_email('15228207@qq.com', ['15228207@qq.com'], 'wrmmhpwuutdfcbcd', info=sellInfo,  subject=f"pTrade通知，清仓{symbol}！")                
+                    send_email('15228207@qq.com', ['15228207@qq.com'], 'YOUR_SMTP_AUTH_CODE', info=sellInfo,  subject=f"pTrade通知，清仓{symbol}！")                
     except Exception as e:
         log.error("清空持仓失败: %s" % str(e))
         if is_trade():
-            send_email('15228207@qq.com', ['15228207@qq.com'], 'wrmmhpwuutdfcbcd', info=f"清仓标的 {str(e)} 失败！！！",  subject="pTrade通知，策略执行失败！！！")
+            send_email('15228207@qq.com', ['15228207@qq.com'], 'YOUR_SMTP_AUTH_CODE', info=f"清仓标的 {str(e)} 失败！！！",  subject="pTrade通知，策略执行失败！！！")
         raise e
         
 def getPrices():
@@ -454,7 +455,7 @@ def calculate_etf_scores(market_data, lookback_window=63):
     
     print("优化后评分结果:",df_score.head(40))
     if is_trade():
-        send_email('15228207@qq.com', ['15228207@qq.com'], 'wrmmhpwuutdfcbcd', info=f"今日评分 \n {df_score}！\n",  subject="pTrade通知，今日评分！！！")
+        send_email('15228207@qq.com', ['15228207@qq.com'], 'YOUR_SMTP_AUTH_CODE', info=f"今日评分 \n {df_score}！\n",  subject="pTrade通知，今日评分！！！")
         
     df_score = df_score[df_score['score'] > g.score_threshold]
     log.info(f"分数超过 {g.score_threshold} 的标的数量是 {len(df_score)}")
