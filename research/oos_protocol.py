@@ -10,8 +10,11 @@ import pandas as pd
 __all__ = [
     "expanding_year_splits",
     "rank_ic",
+    "time_series_ic",
     "deflated_sharpe",
     "max_drawdown",
+    "split_is_oos",
+    "overfit_warning",
     "assert_no_lookahead",
 ]
 
@@ -77,6 +80,15 @@ def rank_ic(factor_row, fwd_return_row):
     return float(np.dot(factor_rank, return_rank) / denominator)
 
 
+def time_series_ic(factor, fwd_return):
+    """Return the Spearman IC across time after dropping non-finite pairs.
+
+    Pandas Series are aligned on their common timestamps; array-like inputs are
+    paired positionally.
+    """
+    return rank_ic(factor, fwd_return)
+
+
 def deflated_sharpe(sharpe, n_obs, n_trials, sr_benchmark=0):
     """Return the probability that a Sharpe exceeds a trial-adjusted benchmark.
 
@@ -132,6 +144,79 @@ def max_drawdown(equity):
         values[positive_peak] / running_peak[positive_peak] - 1.0
     )
     return float(min(0.0, drawdowns.min()))
+
+
+def _nav_metrics(dates, nav):
+    """Calculate CAGR, maximum drawdown, and daily annualized Sharpe."""
+    if nav.size == 0:
+        return {"cagr": float("nan"), "mdd": float("nan"), "sharpe": float("nan")}
+
+    mdd = max_drawdown(nav)
+    cagr = float("nan")
+    if nav.size >= 2:
+        elapsed_years = (dates[-1] - dates[0]).total_seconds() / (
+            365.25 * 24.0 * 60.0 * 60.0
+        )
+        if elapsed_years > 0.0:
+            cagr = float((nav[-1] / nav[0]) ** (1.0 / elapsed_years) - 1.0)
+
+    returns = nav[1:] / nav[:-1] - 1.0
+    returns = returns[np.isfinite(returns)]
+    sharpe = float("nan")
+    if returns.size >= 2:
+        volatility = float(np.std(returns, ddof=1))
+        if volatility > 0.0:
+            sharpe = float(np.mean(returns) / volatility * math.sqrt(252.0))
+
+    return {"cagr": cagr, "mdd": mdd, "sharpe": sharpe}
+
+
+def split_is_oos(dates, nav, is_end="2021-12-31"):
+    """Split a NAV series into independent IS and OOS performance summaries.
+
+    Dates through ``is_end`` are in-sample and later dates are out-of-sample.
+    Invalid date/NAV pairs are omitted.  CAGR uses elapsed calendar time,
+    Sharpe uses daily returns annualized by ``sqrt(252)``, and MDD is returned
+    as a non-positive return.
+    """
+    converted = pd.to_datetime(dates)
+    if isinstance(converted, pd.Timestamp):
+        date_index = pd.DatetimeIndex([converted])
+    else:
+        date_index = pd.DatetimeIndex(converted)
+    nav_values = np.asarray(nav, dtype=float).reshape(-1)
+
+    if len(date_index) != nav_values.size:
+        raise ValueError("dates and nav must have equal length")
+
+    valid = ~date_index.isna() & np.isfinite(nav_values)
+    date_index = date_index[valid]
+    nav_values = nav_values[valid]
+    if np.any(nav_values <= 0.0):
+        raise ValueError("nav values must be positive")
+    if not date_index.is_monotonic_increasing:
+        order = np.argsort(date_index.asi8, kind="stable")
+        date_index = date_index[order]
+        nav_values = nav_values[order]
+
+    cutoff = pd.Timestamp(is_end)
+    if date_index.tz is not None and cutoff.tzinfo is None:
+        cutoff = cutoff.tz_localize(date_index.tz)
+    elif date_index.tz is None and cutoff.tzinfo is not None:
+        cutoff = cutoff.tz_localize(None)
+    elif date_index.tz is not None and cutoff.tzinfo is not None:
+        cutoff = cutoff.tz_convert(date_index.tz)
+
+    is_mask = np.asarray(date_index <= cutoff)
+    return {
+        "is": _nav_metrics(date_index[is_mask], nav_values[is_mask]),
+        "oos": _nav_metrics(date_index[~is_mask], nav_values[~is_mask]),
+    }
+
+
+def overfit_warning(is_sharpe, oos_sharpe, ratio=0.5):
+    """Return whether OOS Sharpe is below ``ratio`` times IS Sharpe."""
+    return bool(float(oos_sharpe) < float(ratio) * float(is_sharpe))
 
 
 def assert_no_lookahead(signal_index, fill_index):
