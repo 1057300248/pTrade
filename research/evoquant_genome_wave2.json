@@ -2,7 +2,7 @@
   "schema_version": 1,
   "wave": 2,
   "strategy": "ADM",
-  "status": "PREDECLARED_NOT_RUN",
+  "status": "EXECUTED_2026-08-22_RESEARCH_ONLY_NO_LIVE_EDIT",
   "research_only": true,
   "auto_apply_live_edits": false,
   "proposed_fields": [

@@ -1,11 +1,13 @@
 # EvoQuant Wave 2 predeclared plan
 
-Status: **PREDECLARED — NOT RUN**.
+Status: **EXECUTED 2026-08-22 — research-only. Proposed live edit: None.**
 > Execution ledger: [`wave2_execution_ledger.md`](wave2_execution_ledger.md).
+> Results: [`evoquant_candidates_wave2.md`](evoquant_candidates_wave2.md).
 >
-> The ledger pre-registers all eight declared grid points before execution.
-> It contains no results; the grids have not been run.
-> Results require a separate, explicitly requested research step.
+> All eight declared grid points ran. Family winners: `W2-CROWD-P90`,
+> `W2-TRANCHE-N2`, `W2-BREADTH-C25`. All three passed OOS gates.
+> `CROWD-P90` and `BREADTH-C25` match incumbent OOS. `TRANCHE-N2` is the
+> only material research difference and is **not** auto-applied to live.
 
 This document freezes Wave 2 before any candidate backtest. It proposes three
 research candidates only. No `ptrade_*.py` file is changed, and no result in

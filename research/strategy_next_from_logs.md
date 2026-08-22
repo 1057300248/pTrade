@@ -1,7 +1,11 @@
 # 策略改进方向（文献子代理 + 当前日志，2026-08-22）
 
 两名子代理（文献优先 / 日志优先）各自联网核对后对照本仓库引擎打印。
-本文不引入任何新的 OOS 数字，不改 `ptrade_*.py`，不执行 Wave 2 网格。
+本文起草时不引入任何新的 OOS 数字，不改 `ptrade_*.py`，不执行 Wave 2 网格。
+Wave 2 已于 2026-08-22 原样执行（N=+8，累计 16）。结果见
+[`evoquant_candidates_wave2.md`](evoquant_candidates_wave2.md) 与
+[`wave2_execution_ledger.md`](wave2_execution_ledger.md)。
+**Proposed live edit: None.**
 
 冻结榜单仍以 `research/compare_strategies.md` 与 `/opt/cursor/artifacts/verify_oos.txt` 为准：
 RMDC OOS 6.44% / 2026-07 −0.71%；ADM OOS 8.17% / IS 12.03% / 2026-07 −3.90%；

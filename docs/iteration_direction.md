@@ -6,6 +6,10 @@
 [`../research/strategy_next_from_logs.md`](../research/strategy_next_from_logs.md)：
 先对齐 RMDC hysteresis（N=0），再原样跑 Wave 2；不开新格点。
 
+Wave 2 已于 2026-08-22 执行，累计 **N=16**。结果见
+[`../research/evoquant_candidates_wave2.md`](../research/evoquant_candidates_wave2.md)。
+**Proposed live edit: None.** 未开 `iteration_experiments.md` 额外六行。
+
 ## 1. 现状（一句话）
 
 在位者是 **ADM（进取，OOS 8.17%）与 RMDC（保守，OOS 6.44%，2026-07 −0.71%）**；
