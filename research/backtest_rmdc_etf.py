@@ -68,6 +68,8 @@ LOCKDOWN_DAYS = 5
 CORR_LIMIT = 0.65
 CORR_CLUSTER = 0.75
 VOL_TARGET = 0.12
+HYSTERESIS = 1.20
+MIN_WEIGHT = 0.04
 WINDOWS = (
     ("2024-02-01", "2024-02-29"),
     ("2026-07-01", "2026-07-31"),
@@ -157,7 +159,44 @@ def eligible(codes, snap, require_trend):
     return [code for code, _ in ranked]
 
 
-def weekly_target(snap, lockdown):
+def apply_hysteresis(current, proposed, score_map, gap=1.20):
+    """Keep incumbents unless a challenger beats them by `gap`."""
+    current = list(current or [])
+    proposed = list(proposed or [])
+    if not current:
+        return proposed
+    limit = max(len(proposed), 1)
+    kept = []
+    for code in current:
+        if code in proposed:
+            if code not in kept:
+                kept.append(code)
+            continue
+        best = None
+        best_score = -1e18
+        for cand in proposed:
+            if cand in current or cand in kept:
+                continue
+            sc = float(score_map.get(cand, 0.0))
+            if sc > best_score:
+                best_score = sc
+                best = cand
+        old_score = float(score_map.get(code, 0.0))
+        if best is not None and best_score > old_score * gap:
+            kept.append(best)
+        else:
+            kept.append(code)
+    for code in proposed:
+        if code not in kept and len(kept) < limit:
+            kept.append(code)
+    ordered = [c for c in proposed if c in kept]
+    for code in kept:
+        if code not in ordered:
+            ordered.append(code)
+    return ordered[:limit]
+
+
+def weekly_target(snap, lockdown, current_held):
     breadth = growth_breadth(snap["ret20"], GROWTH)
     med_vol = median_vol(snap["vols"], GROWTH)
     state = classify_state(breadth, med_vol, lockdown)
@@ -169,10 +208,16 @@ def weekly_target(snap, lockdown):
         if snap["ret63"].get(code, -1.0) > 0.0:
             div_all_neg = False
             break
-    weights = build_targets(
+    raw_weights = build_targets(
         state, growth_ranked, div_ranked, snap["vols"], cluster, div_all_neg, VOL_TARGET
     )
-    return {code: w for code, w in weights.items() if w >= 0.01}
+    proposed = [
+        code for code, weight in sorted(raw_weights.items(), key=lambda item: -item[1])
+        if weight >= MIN_WEIGHT
+    ]
+    held_keep = [code for code in current_held if code in raw_weights]
+    stable = apply_hysteresis(held_keep, proposed, snap["scores"], HYSTERESIS)
+    return {code: raw_weights[code] for code in stable if code in raw_weights}
 
 
 def flatten_target(snap):
@@ -335,7 +380,7 @@ def run():
             if len(snap["mkt_close"]) >= 4 and crash_triggered(snap["mkt_close"], 0.06, 0.08):
                 lockdown_left = max(lockdown_left, LOCKDOWN_DAYS)
                 lockdown = True
-            pending = weekly_target(snap, lockdown)
+            pending = weekly_target(snap, lockdown, list(holdings))
             last_week = week
 
         equity.append(nav)
