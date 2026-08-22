@@ -75,7 +75,35 @@ def _run_or_import_results(module):
     for name in ("run", "main"):
         candidate = getattr(module, name, None)
         if callable(candidate) and _callable_without_required_args(candidate):
-            return candidate(), name
+            original_perf = getattr(module, "perf_summary", None)
+            captured = []
+            capture_equity = callable(original_perf) and not hasattr(module, "sub_perf")
+            if capture_equity:
+                def recording_perf(navs, dates):
+                    captured.append((navs, dates))
+                    return original_perf(navs, dates)
+
+                module.perf_summary = recording_perf
+            try:
+                result = candidate()
+            finally:
+                if capture_equity:
+                    module.perf_summary = original_perf
+            if capture_equity and isinstance(result, dict) and captured:
+                navs, dates = captured[0]
+                timestamp = module.pd.Timestamp
+
+                def subperiod(start, end):
+                    mask = (dates >= timestamp(start)) & (dates <= timestamp(end))
+                    sub_navs = navs[mask]
+                    if len(sub_navs) < 2:
+                        return None
+                    return original_perf(sub_navs / sub_navs[0], dates[mask])
+
+                result = dict(result)
+                result.setdefault("is", subperiod(START, IS_END))
+                result.setdefault("oos", subperiod(OOS_START, END))
+            return result, name
     for name in ("RESULTS", "results", "SUMMARY", "summary"):
         if hasattr(module, name):
             return getattr(module, name), name
