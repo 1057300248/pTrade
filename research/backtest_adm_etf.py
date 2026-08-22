@@ -14,6 +14,7 @@ Does not import PTrade builtins; live trading still requires PTrade.
 """
 from __future__ import print_function
 
+import inspect
 import math
 import os
 import sys
@@ -66,7 +67,8 @@ OOS_START = "2022-01-01"
 MARKET = "510300.SS"
 COST_ONE_WAY = 0.0008
 # Mirrors initialize() in ptrade_adm_etf.py (frozen live parameters).
-VOL_TARGET = 0.12
+# vol target tracks the live build_targets default so the mirror cannot drift.
+VOL_TARGET = inspect.signature(build_targets).parameters["vol_target"].default
 LOCKDOWN_DAYS = 3
 WINDOWS = (
     ("2024-02-01", "2024-02-29"),
