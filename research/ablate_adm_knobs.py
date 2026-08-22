@@ -14,7 +14,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from etf_panel import load_panel
+from research.etf_panel import load_panel
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -455,7 +455,7 @@ OOS and stress metrics do not re-rank it.
 
 
 def run():
-    panel = load_panel()
+    panel = load_panel(codes=UNIVERSE)
     calendar = np.unique(
         np.concatenate([bars["dates"] for bars in panel.values()])
     )
