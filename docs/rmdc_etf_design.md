@@ -47,7 +47,7 @@ RMDC 是从零重写，不是旧状态机轮动的调参版：
 ## 验证流程
 
 1. 本地纯函数单测：`python -m pytest tests -q`。
-2. 免费日 K（新浪，腾讯兜底）+ 研究回测：`research/fetch_free_etf_bars.py` → `research/backtest_rmdc_etf.py`。实盘只用 PTrade 数据，见 `research/data_sources.md`。
+2. 免费日 K（新浪 / 腾讯 / baostock / akshare / 同花顺免费 / free-stockdb）+ 研究回测：`research/fetch_free_etf_bars.py` → `research/backtest_rmdc_etf.py`。实盘只用 PTrade 数据，见 `research/data_sources.md`。
 3. **SimTradeLab 只是第一道过滤**（日线）：`research/run_simtradelab_rmdc.py`，`broker_profile="auto"`——SimTradeLab 没有国金口径，**不要填 `guosheng`**（那是国盛，会误开 Python 3.5 检查）。它只能验证生命周期、T+1、佣金和语法；14:50/14:54 会被日线压成 15:00，废单、部分成交、`get_etf_info` 溢价都测不到。**不要为了回测去开 QMT**：API 不同，策略贴不过去。
 4. 最终以国金 PTrade 分钟回测 + 仿真为准，佣金按真实费率、滑点不设 0。
 

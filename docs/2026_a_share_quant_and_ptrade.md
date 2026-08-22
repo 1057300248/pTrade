@@ -82,7 +82,7 @@ PTrade 是恒生量化终端，由券商部署。能力边界：
 5. **下单**：`order` / `order_target`，先卖后买，实盘 14:54 再买。
 6. **跨境 ETF**：只放防御袖仓；实盘 IOPV 溢价≥3% 不买。
 7. **量化中性 / 高频 / 微盘**：不做。
-8. **数据**：实盘 PTrade `get_history`；研究用新浪日 K（腾讯兜底）。同花顺 iFinD / HiThink / CMES 要账号，不进策略文件。
+8. **数据**：实盘 PTrade `get_history`；研究用免费日 K（默认新浪，腾讯兜底，并可选用同花顺免费行情、baostock、akshare、本地 free-stockdb）。同花顺 iFinD / HiThink / CMES 要账号，不进策略文件。
 9. **密钥**：`ETF轮动策略V2.py` 旧 SMTP 授权码须在 QQ 邮箱作废。
 
 ### 本地样本上的对照（研究性质，不是实盘预期）

@@ -1,20 +1,29 @@
 # -*- coding: utf-8 -*-
-"""Fetch ETF daily bars from free public APIs for local research.
+"""Fetch ETF daily bars from free public / local research APIs.
 
 Live 国金 PTrade strategies must NOT import this file. They use get_history.
-Default source is Sina; Tencent fqkline is the fallback. Eastmoney is skipped
-on purpose (IP blocks). akshare / iFinD / CMES are optional and unused here.
+Default chain: Sina, Tencent, baostock, akshare, Tonghuashun free K, free-stockdb.
 """
 from __future__ import print_function
 
-import json
+import argparse
 import os
-import time
-import urllib.request
+import sys
 
 import pandas as pd
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from research.source_adapters import (
+    SCHEMA,
+    TARGET_LAST_DATE,
+    fetch_one,
+    probe_sources,
+    resolve_sources,
+)
+
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache", "etf_daily")
 SIM_DIR = os.path.join(os.path.dirname(__file__), "simtradelab_data", "cn", "stocks")
 
@@ -51,80 +60,6 @@ UNIVERSE = [
     ("515220.SS", "sh515220", "煤炭"),
     ("000300.SS", "sh000300", "沪深300指数"),
 ]
-
-UA = {"User-Agent": "Mozilla/5.0"}
-PAUSE_SEC = 0.25
-TARGET_LAST_DATE = pd.Timestamp("2026-08-21")
-SCHEMA = ["date", "open", "high", "low", "close", "volume", "amount"]
-
-
-def _get(url, encoding="utf-8"):
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read().decode(encoding, errors="replace")
-
-
-def fetch_sina(sina_symbol, datalen=2500):
-    url = (
-        "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
-        "CN_MarketData.getKLineData?symbol=%s&scale=240&ma=no&datalen=%d"
-        % (sina_symbol, datalen)
-    )
-    raw = _get(url)
-    if not raw or raw == "null":
-        return pd.DataFrame()
-    rows = json.loads(raw)
-    if not rows:
-        return pd.DataFrame()
-    frame = pd.DataFrame(rows)
-    frame["date"] = pd.to_datetime(frame["day"])
-    for col in ("open", "high", "low", "close", "volume"):
-        frame[col] = pd.to_numeric(frame[col], errors="coerce")
-    frame["amount"] = frame["close"] * frame["volume"]
-    return frame[SCHEMA].dropna()
-
-
-def fetch_tencent(sina_symbol, count=800):
-    url = (
-        "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s,day,,, %d,qfq"
-        % (sina_symbol, count)
-    ).replace(" ", "")
-    raw = _get(url)
-    payload = json.loads(raw)
-    block = (payload.get("data") or {}).get(sina_symbol) or {}
-    series = block.get("qfqday") or block.get("day") or []
-    if not series:
-        return pd.DataFrame()
-    frame = pd.DataFrame(series, columns=["date", "open", "close", "high", "low", "volume"])
-    frame["date"] = pd.to_datetime(frame["date"])
-    for col in ("open", "high", "low", "close", "volume"):
-        frame[col] = pd.to_numeric(frame[col], errors="coerce")
-    # Tencent CN fqkline volume is in lots (手), including liquid ETFs/indexes.
-    frame["volume"] = frame["volume"] * 100.0
-    frame["amount"] = frame["close"] * frame["volume"]
-    return frame[SCHEMA].dropna()
-
-
-def fetch_one(code, sina_symbol):
-    try:
-        frame = fetch_sina(sina_symbol)
-        source = "sina"
-    except Exception as exc:
-        print("  sina fail %s %s" % (code, exc))
-        frame = pd.DataFrame()
-        source = None
-    if frame.empty:
-        time.sleep(PAUSE_SEC)
-        try:
-            frame = fetch_tencent(sina_symbol)
-            source = "tencent"
-        except Exception as exc:
-            print("  tencent fail %s %s" % (code, exc))
-            return pd.DataFrame(), None
-    if frame.empty:
-        return frame, None
-    frame = frame.drop_duplicates(subset=["date"]).sort_values("date")
-    return frame, source
 
 
 def _write(frame, path):
@@ -167,16 +102,62 @@ def _reuse_current_outputs(code, cache_path, sim_path):
     return True
 
 
-def main():
+def _selected_universe(codes):
+    if not codes:
+        return list(UNIVERSE)
+    wanted = set()
+    for item in codes:
+        for part in str(item).replace(";", ",").split(","):
+            part = part.strip()
+            if part:
+                wanted.add(part.upper())
+    selected = [row for row in UNIVERSE if row[0] in wanted or row[1].upper() in wanted]
+    if not selected:
+        raise ValueError("no UNIVERSE match for %s" % codes)
+    return selected
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Fetch research ETF daily bars")
+    parser.add_argument(
+        "--sources",
+        default=None,
+        help="Comma list: sina,tencent,baostock,akshare,ths,free-stockdb "
+        "(aliases: aakshare, tonghuashun). Env: PTRADE_RESEARCH_SOURCES",
+    )
+    parser.add_argument("--force", action="store_true", help="Refetch even if cache is current")
+    parser.add_argument("--probe", action="store_true", help="Ping each source on one code and exit")
+    parser.add_argument("--codes", default=None, help="Subset, e.g. 510300.SS,159915.SZ")
+    args = parser.parse_args(argv)
+
+    sources = resolve_sources(args.sources)
+    if args.probe:
+        code, sina_symbol, name = _selected_universe(args.codes)[0]
+        print("probe %s %s sources=%s" % (code, name, ",".join(sources)))
+        rows = probe_sources(code, sina_symbol, sources=sources)
+        for row in rows:
+            print(
+                "PROBE %s ok=%s rows=%s %s..%s %sms error=%s"
+                % (
+                    row["source"],
+                    row["ok"],
+                    row["rows"],
+                    row["first"],
+                    row["last"],
+                    row["ms"],
+                    row["error"],
+                )
+            )
+        return rows
+
     summary = []
-    for code, sina_symbol, name in UNIVERSE:
+    for code, sina_symbol, name in _selected_universe(args.codes):
         cache_path = os.path.join(CACHE_DIR, code + ".parquet")
         sim_path = os.path.join(SIM_DIR, code + ".parquet")
-        if _reuse_current_outputs(code, cache_path, sim_path):
+        if not args.force and _reuse_current_outputs(code, cache_path, sim_path):
             summary.append((code, name, 0, None, str(TARGET_LAST_DATE.date()), "existing"))
             continue
-        frame, source = fetch_one(code, sina_symbol)
-        time.sleep(PAUSE_SEC)
+        frame, source = fetch_one(code, sina_symbol, sources=sources)
         if frame.empty:
             print("FAIL %s %s" % (code, name))
             summary.append((code, name, 0, None, None, None))
@@ -189,6 +170,7 @@ def main():
         summary.append((code, name, len(frame), str(first), str(last), source))
     print("cache=%s" % CACHE_DIR)
     print("simtradelab=%s" % SIM_DIR)
+    print("sources=%s" % ",".join(sources))
     return summary
 
 
