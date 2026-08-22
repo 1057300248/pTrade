@@ -10,19 +10,31 @@
 国金为 Python 3.11，文件仍避免 f-string。设计与验证流程见
 [`docs/rmdc_etf_design.md`](docs/rmdc_etf_design.md)。
 
+在 ADM 的冻结样本外（OOS）结果明确优于 RMDC 前，**唯一的主实盘粘贴文件仍是
+`ptrade_rmdc_etf.py`**。实验策略状态如下；状态不是收益承诺：
+
+| 文件 | 状态 | 用途 |
+|---|---|---|
+| `ptrade_rmdc_etf.py` | **PRIMARY** | 当前唯一主实盘粘贴文件 |
+| `ptrade_combo_etf.py` | **REJECTED** | 已否决，仅保留为研究对照 |
+| `ptrade_gem_etf.py` | **REJECTED** | 17 行业池 12-1 动量方案已否决，仅保留复现 |
+| `ptrade_adm_etf.py` | **UNDER TEST** | ADM 候选仍在验证，不得替代 RMDC 实盘 |
+
 ## 本地验证
 
 ```bash
 pip install numpy pandas pytest pyarrow
-python -m pytest tests -q                  # 单元测试
-python research/fetch_free_etf_bars.py     # 抓免费日 K（新浪，腾讯兜底）
-python research/backtest_rmdc_etf.py       # 研究回测（含 2024-02 / 2026-07 窗口）
+python3 -m pytest tests -q                  # 单元测试
+python3 research/fetch_free_etf_bars.py     # 抓免费日 K（新浪，腾讯兜底）
+python3 research/backtest_rmdc_etf.py       # 研究回测（含 2024-02 / 2026-07 窗口）
 ```
 
 SimTradeLab 只作第一道过滤（国金没有独立 broker 口径，用 `auto`，不要填 `guosheng`）：
 
 ```bash
-PYTHONPATH=../SimTradeLab/src python research/run_simtradelab_rmdc.py
+PYTHONPATH=../SimTradeLab/src python3 research/run_simtradelab_rmdc.py
+PYTHONPATH=../SimTradeLab/src python3 research/run_simtradelab_gem.py
+PYTHONPATH=../SimTradeLab/src python3 research/run_simtradelab_adm.py
 ```
 
 SimTradeLab 不能替代国金分钟回测和仿真，也不要为此去开 QMT。
