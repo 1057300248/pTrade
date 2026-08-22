@@ -137,7 +137,7 @@ The primary and contemporaneous sources align on the mechanism:
 
 ### 2025: the rules become structural
 
-CSRC’s program-trading rule and the SSE/SZSE implementation measures formalize reporting, monitoring, system controls, HFT thresholds and differentiated fees ([S121](http://www.csrc.gov.cn/csrc/c100028/c7480577/content.shtml), [S124](http://www.sse.com.cn/lawandrules/sselawsrules2025/trade/universal/c/c_20250612_10781696.shtml), [S125](https://www.szse.cn/lawrules/rule/trade/current/t20250403_612770.html)). Backtests that assume unchanged shorting, latency or turnover economics across the rule break are not operationally faithful.
+CSRC’s program-trading rule and the SSE/SZSE implementation measures formalize reporting, monitoring, system controls, HFT thresholds and differentiated fees ([S121](http://www.csrc.gov.cn/csrc/c100028/c7480577/content.shtml), [S124](http://www.sse.com.cn/lawandrules/sselawsrules2025/trade/universal/c/c_20250612_10781696.shtml), [S125](https://docs.static.szse.cn/www/lawrules/rule/trade/current/W020250403603802169453.pdf)). Backtests that assume unchanged shorting, latency or turnover economics across the rule break are not operationally faithful.
 
 ### July-August 2026: crowded factor rotation
 
