@@ -28,7 +28,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from etf_panel import load_panel
+try:
+    from etf_panel import load_panel
+except ImportError:
+    from research.etf_panel import load_panel
 
 
 HERE = Path(__file__).resolve().parent
