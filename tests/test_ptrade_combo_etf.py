@@ -112,7 +112,7 @@ def test_crowding_points_can_reach_four():
     high = close * 1.04
     low = close * 0.96
     volume = np.concatenate(
-        [np.full(60, 1_000_000.0), np.full(20, 4_000_000.0)]
+        [np.full(60, 1_000_000.0), np.full(20, 5_000_000.0)]
     )
 
     assert crowding_points(close, high, low, volume) == 4
