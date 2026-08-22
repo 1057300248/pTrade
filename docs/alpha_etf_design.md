@@ -9,7 +9,7 @@
 本仓库维持两份实盘粘贴文件，各占 Pareto 边界的一端（与 [`README.md`](../README.md) 一致）：
 
 - **保守仓（已实盘口径）**：[`ptrade_rmdc_etf.py`](../ptrade_rmdc_etf.py)，回撤最小的账本。复权后 T+1 引擎口径 2026-07 压力窗口 **−0.71%**（全表见 §3），是全部候选中最抗崩盘的。设计见 [`rmdc_etf_design.md`](rmdc_etf_design.md)。
-- **进取仓候选（本文）**：[`ptrade_adm_etf.py`](../ptrade_adm_etf.py)，目标是**更高的 OOS CAGR**（复权后 OOS 7.54% 对 RMDC 6.44%），代价是崩盘月比 RMDC 挨打更多（2026-07 −2.86% 对 −0.71%）、全样本回撤更深（−20.29% 对 −14.01%）。
+- **进取仓候选（本文）**：[`ptrade_adm_etf.py`](../ptrade_adm_etf.py)，目标是**更高的 OOS CAGR**（复权后、实盘 vol_target 0.16 口径：OOS 8.17% 对 RMDC 6.44%），代价是崩盘月比 RMDC 挨打更多（2026-07 −3.90% 对 −0.71%）、全样本回撤更深（−21.51% 对 −14.01%）。
 
 ADM 不取代 RMDC。它只有在通过 §4 的全部关卡后才作为进取仓上实盘；RMDC 继续持有"崩盘最小化"这一端。
 
@@ -32,7 +32,7 @@ Antonacci 双动量（Dual Momentum）：在**少数资产类别**之间轮动�
 
 ### 1.3 权重与风控
 
-- **波动目标**：胜者权重 = `min(1, vol_target / vol20)`，`vol20` 为 20 日对数收益年化波动；余量全部给 511010。**`vol_target` 冻结为 0.12**。说明：复权前的 IS 网格（[`../research/ablate_adm_knobs.md`](../research/ablate_adm_knobs.md)，网格 {10%,12%,16%}×{月门开,关}，按 IS Sharpe 选）曾指向 VT16-MON，但该网格产生于拆分复权之前，按规则 16 一律作废；**在复权数据重跑该网格之前，实盘保持 0.12**（实盘文件内已注明 pending）。
+- **波动目标**：胜者权重 = `min(1, vol_target / vol20)`，`vol20` 为 20 日对数收益年化波动；余量全部给 511010。**`vol_target` 冻结为 0.16**：IS 网格已在**拆分复权后的 panel 上重新生成**（[`../research/ablate_adm_knobs.md`](../research/ablate_adm_knobs.md)，网格 {10%,12%,16%}×{月门开,关}，只按 IS 指标选），复权网格确认 IS 胜者仍是 **VT16-MON**（IS 12.03% / Sharpe 0.85），且该冻结推荐通过 OOS Sharpe 衰减规则（0.67 ≥ 0.5 × 0.85）。实盘文件 `g.vol_target = 0.16`，回测端直接读取实盘默认值防止漂移。
 - **崩盘 overlay（14:45 日频）**：510300 或任一持有风险资产 单日 ≤−6% 或 3 日 ≤−8% → 全部转债 95%，锁仓 **3 个交易日**；周频调仓在计算目标时也复查同一市场崩盘条件。
 - **执行**：14:50 先卖、14:54 补买（每日注册买腿）；`order`/`order_target`，不用 `order_target_value`；100 股一手（51188* 按 1 股）；`get_history` 逐标的、`fq="pre"`、`include=False`、`hist_count=300`；`check_limit` 拒买 fail-open；废单/成交回调簿记与 RMDC 相同。
 
@@ -44,46 +44,47 @@ Antonacci 双动量（Dual Momentum）：在**少数资产类别**之间轮动�
 
 - 新浪/腾讯免费日 K **不含 ETF 份额拆分/合并复权**。缓存里实测有 18 处 |单日收益|>22% 的假跳变（A 股 ETF 涨跌停 ±10%/±20%，超过 22% 必为公司行为），例如 513100 于 **2022-01-14** 假跌 −80.5%（1 拆 5）、515880 两次拆分、516160 假涨 +221%（份额合并）。
 - 装载层 [`../research/etf_panel.py`](../research/etf_panel.py) 统一做拆分回调（按 close 比值回调此前全部 OHLC、反向调整成交量），全部回测引擎（ADM/GEM/RMDC/Combo）已改走该装载层。**未修复数据上的任何数字一律作废，不可引用。**
-- 对 ADM 的具体影响：4 只风险资产中只有 513100 被污染。假 −80% 那根 K 线会把纳指腿的 12-1 动量在随后约一年内压成深度负值。复权后重跑（§3）与复权前报告逐项一致（同为 420 笔成交、期末净值 2.020）——即污染期内纳指腿在两套序列下都不合格（2022 年纳指真实处于熊市，21 日门与绝对动量本来就把它挡在门外），没有翻转任何一次持仓决策。这是**重跑验证过的结论，不是假设**（此前 [`../research/rmdc_return_drag.md`](../research/rmdc_return_drag.md) §11 对此数据风险的警告由本次重跑关闭）。
+- 对 ADM 的具体影响：4 只风险资产中只有 513100 被污染。假 −80% 那根 K 线会把纳指腿的 12-1 动量在随后约一年内压成深度负值。**等参数对照（vol_target 0.12）下，复权后重跑与复权前输出逐字节相同**（同为 420 笔成交、期末净值 2.020）；当前实盘常量 0.16 下 raw 与复权同样几乎一致（OOS 8.16% 对 8.17%）——即污染期内纳指腿在两套序列下都不合格（2022 年纳指真实处于熊市，21 日门与绝对动量本来就把它挡在门外），拆分没有翻转任何一次持仓决策。这是**重跑验证过的结论，不是假设**（此前 [`../research/rmdc_return_drag.md`](../research/rmdc_return_drag.md) §11 对此数据风险的警告由本次重跑关闭，adjusted vs raw 对照已记入该节）。
 - 实盘 PTrade `get_history(fq='pre')` 是券商端复权的**另一条序列**，与研究端修复序列不等同；不得静默混用，仿真期需在除权日前后逐日核对（规则 16 第二款）。
 
 ## 3. 诚实记分板（复权后引擎输出，2026-08-22 重跑）
 
-口径：共享 T+1 引擎（T 收盘出信号、T+1 收盘成交、单边 8bp、周频 ISO 切换、复权装载层 `etf_panel.py`）。IS = 2018-01-01..2021-12-31（仅诊断），OOS = 2022-01-01..2026-08-21（唯一有效评价区间）。下表为本文档撰写时逐个运行 `research/backtest_{adm,rmdc,gem,combo}_etf.py` 实际打印的数字（RMDC 的 IS/OOS 分段按 [`../research/compare_strategies.py`](../research/compare_strategies.py) 的净值切片口径计算）：
+口径：共享 T+1 引擎（T 收盘出信号、T+1 收盘成交、单边 8bp、周频 ISO 切换、复权装载层 `etf_panel.py`）。IS = 2018-01-01..2021-12-31（仅诊断），OOS = 2022-01-01..2026-08-21（唯一有效评价区间）。下表与 [`../research/compare_strategies.md`](../research/compare_strategies.md) / [`../research/backtest_adm_report.md`](../research/backtest_adm_report.md)（均已在复权 panel 上重新生成）一致；ADM 行为当前实盘常量 **vol_target 0.16**：
 
 | 策略 | 全样本 CAGR / MDD / Sharpe | IS CAGR / Sharpe | OOS CAGR / MDD / Sharpe | 2024-02 | 2026-07 |
 | --- | --- | --- | --- | ---: | ---: |
-| **ADM** | 8.49% / −20.29% / 0.78 | 9.63% / 0.83 | **7.54% / −11.30% / 0.73** | +2.52% | −2.86% |
+| **ADM（vol 0.16 实盘）** | 9.92% / −21.51% / 0.75 | 12.03% / 0.85 | **8.17% / −15.12% / 0.67** | +3.24% | −3.90% |
 | RMDC | 6.40% / −14.01% / 0.68 | 6.30% / 0.66 | 6.44% / −11.88% / 0.69 | +2.53% | **−0.71%** |
 | GEM（复权后，见 §6） | 10.22% / −16.77% / 0.77 | 10.11% / 0.72 | 10.41% / −11.96% / 0.82 | +3.98% | −3.24% |
 | Combo 残差组合（已否决） | 1.59% / −32.37% / 0.19 | 3.65% / 0.32 | −0.03% / −24.83% / 0.07 | +3.08% | −6.32% |
+| 双层原型（未复现，见 §7） | 7.18% / −26.59% / 0.56 | 9.25% / 0.68 | 5.54% / −17.64% / 0.45 | +6.16% | −6.11% |
 | 510300 买入持有 | 1.44% / −45.10% / 0.17 | 4.91% / 0.34 | −1.38% / −36.11% / 0.01 | +8.86% | −6.90% |
 
-**与仓库内报告文件的差异（实现者必须刷新）**：
+**报告文件状态**：
 
-- [`../research/backtest_adm_report.md`](../research/backtest_adm_report.md)（02:38 生成）与 [`../research/compare_strategies.md`](../research/compare_strategies.md)（02:40 生成）早于复权装载层（02:43 合入），属**复权前**产物。ADM 行恰好与复权后一致（上文已解释并重跑核实）；RMDC 行有小幅漂移（复权前全样本 6.59%/−12.73%/0.69 → 复权后 6.40%/−14.01%/0.68）；GEM 行完全翻转（§6）；两份文件都需在复权数据上重新生成（`python3 research/compare_strategies.py` 会重写汇总表）。
-- [`../research/ablate_adm_knobs.md`](../research/ablate_adm_knobs.md) 与 [`../research/ablate_gem_knobs.md`](../research/ablate_gem_knobs.md) 同为复权前产物，其中一切数字按规则 16 作废，须在复权 panel 上重新生成后才可引用。
+- [`../research/backtest_adm_report.md`](../research/backtest_adm_report.md)、[`../research/compare_strategies.md`](../research/compare_strategies.md) 与 [`../research/ablate_adm_knobs.md`](../research/ablate_adm_knobs.md) 均已在**复权 panel 上重新生成**，可以引用；复权前旧数字仅存于 ADM 报告附录 A，禁止引用。
+- [`../research/ablate_gem_knobs.md`](../research/ablate_gem_knobs.md) 仍是复权前产物，其中一切数字按规则 16 作废；GEM 的 IS 网格须在复权 panel 上重新生成后才可引用（§6）。
 - 引擎内打印的 "overfit check" 是弱条件（仅在 IS Sharpe>1.5 且 OOS Sharpe<0.3 时告警）；本文与报告采用的判据是更严的 **OOS Sharpe ≥ 0.5 × IS Sharpe**。两者对 ADM 结论一致；对 Combo 不一致（弱条件打印 ok，严判据不通过，见 §5）。
 
 ## 4. ADM 验收关卡（gate）与当前状态
 
-| Gate | 阈值 | 复权后引擎结果 | 判定 |
+| Gate | 阈值 | 复权后引擎结果（vol 0.16 实盘口径） | 判定 |
 | --- | --- | --- | --- |
-| G1 过拟合衰减 | OOS Sharpe 不低于 0.5 × IS Sharpe | 0.73 ≥ 0.5 × 0.83 = 0.415 | 通过 |
-| G2 微盘危机月 | 2024-02 收益 > −8% | +2.52%（月内回撤 −1.08%） | 通过 |
-| G3 动量崩塌月 | 2026-07 收益 > −10% | −2.86%（月内回撤 −3.70%） | 通过 |
-| G4 相对基准 | OOS CAGR 高于 510300 买入持有 | 7.54% 对 −1.38% | 通过 |
-| Pareto 分工 | OOS CAGR 高于 RMDC；RMDC 保住崩盘端 | 7.54% > 6.44%；2026-07 RMDC −0.71% 优于 ADM −2.86% | 成立 |
+| G1 过拟合衰减 | OOS Sharpe 不低于 0.5 × IS Sharpe | 0.67 ≥ 0.5 × 0.85 = 0.425 | 通过 |
+| G2 微盘危机月 | 2024-02 收益 > −8% | +3.24%（月内回撤 −1.45%） | 通过 |
+| G3 动量崩塌月 | 2026-07 收益 > −10% | −3.90%（月内回撤 −4.96%） | 通过 |
+| G4 相对基准 | OOS CAGR 高于 510300 买入持有 | 8.17% 对 −1.38% | 通过 |
+| Pareto 分工 | OOS CAGR 高于 RMDC；RMDC 保住崩盘端 | 8.17% > 6.44%；2026-07 RMDC −0.71% 优于 ADM −3.90% | 成立 |
 
 两个压力窗口是检验场景，不是训练目标（规则 3）；上表没有任何参数是看过这两个窗口后调的。
 
+**已完成**：复权 panel 上的 vol-target IS 网格已重新生成（`ablate_adm_knobs.md`，IS 胜者 VT16-MON，实盘 `vol_target` = 0.16）；`backtest_adm_report.md` / `compare_strategies.md` 已刷新为复权后数字。
+
 **上实盘前仍未完成（顺序执行）**：
 
-1. 在复权 panel 上重跑 vol-target IS 网格（重新生成 `ablate_adm_knobs.md`），据此决定 `vol_target` 维持 0.12 还是按 IS 规则升档；在此之前实盘冻结 0.12。
-2. 刷新 `backtest_adm_report.md` / `compare_strategies.md` 为复权后数字（§3 差异清单）。
-3. SimTradeLab 首过滤：`PYTHONPATH=../SimTradeLab/src python3 research/run_simtradelab_adm.py`（`broker_profile="auto"`）；只验证生命周期/T+1/语法，14:50/14:54 会被日线压成 15:00。
-4. 国金 PTrade 分钟回测（区间必须覆盖 2024-02 与 2026-07）+ ≥4 周仿真：真实费率、滑点不设 0，重点核对 513100 的 QDII 溢价与除权日复权、废单与部分成交。
-5. 任一关卡不过 → 不部署，回到设计；不做参数抢救。
+1. SimTradeLab 首过滤：`PYTHONPATH=../SimTradeLab/src python3 research/run_simtradelab_adm.py`（`broker_profile="auto"`）；只验证生命周期/T+1/语法，14:50/14:54 会被日线压成 15:00。
+2. 国金 PTrade 分钟回测（区间必须覆盖 2024-02 与 2026-07）+ ≥4 周仿真：真实费率、滑点不设 0，重点核对 513100 的 QDII 溢价与除权日复权、废单与部分成交。
+3. 任一关卡不过 → 不部署，回到设计；不做参数抢救。
 
 ## 5. 为什么否决残差动量组合（`ptrade_combo_etf.py`）
 
@@ -99,7 +100,7 @@ Antonacci 双动量（Dual Momentum）：在**少数资产类别**之间轮动�
 
 **复权后的事实（本次重跑）**：GEM 的灾难数字大部分是**数据伪影**——17 行业池里多只 ETF 带假 −50% 拆分 K 线（512480/512690/512800/515880/515980/516160 等），把动量分数与净值一起打穿。复权后同一引擎打印：全样本 10.22%/−16.77%/0.77，OOS 10.41%/−11.96%/0.82，2026-07 −3.24%。**否决 GEM 的那组数字按规则 16 已作废。**
 
-**结论（两头都要诚实）**：GEM 维持"已否决、不上实盘"状态——被否决的候选不能因为一次重跑就悄悄回到候选池，必须完整重走冻结验证（复权 panel 上重新生成 IS 网格、走前检验、SimTradeLab、国金），这是维护者的重审事项，不是本文的裁定。同时，**ADM 的成立从不依赖 GEM 的失败**（规则 13 双向），ADM 的验收只看 §4 自己的关卡。
+**结论（两头都要诚实）**：GEM 的状态是 **UNDER TEST（重启研究）**——当初的否决判决是数据伪影所致，按规则 16 作废；但被否决的候选不能因为一次重跑就**悄悄转正为主实盘**，它必须在复权 panel 上重新生成 IS 网格（`ablate_gem_knobs.md` 当前仍是复权前产物、不可引用）、再完整走冻结验证（走前检验、SimTradeLab、国金分钟回测/仿真）后才谈候选资格。这是维护者的重审事项，不是本文的裁定。同时，**ADM 的成立从不依赖 GEM 的失败**（规则 13 双向），ADM 的验收只看 §4 自己的关卡。
 
 ## 7. 附录：双层动量（dual-layer）旧规格——未复现，不上实盘
 

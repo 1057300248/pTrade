@@ -9,22 +9,24 @@
 国金为 Python 3.11，文件避免 f-string。
 
 - **保守仓：[`ptrade_rmdc_etf.py`](ptrade_rmdc_etf.py)**（残差动量 + 拥挤否决 + 相关过滤 + 成长/防御袖仓）。
-  回撤控制最好，2026-07 压力窗口表现最优（-0.71%，全对照见
-  [`research/backtest_adm_report.md`](research/backtest_adm_report.md)）。
+  回撤控制最好，2026-07 压力窗口表现最优（-0.71%；复权后全样本 6.40% / MDD -14.01%，OOS 6.44%，
+  全对照见 [`research/compare_strategies.md`](research/compare_strategies.md)）。
   设计与验证流程见 [`docs/rmdc_etf_design.md`](docs/rmdc_etf_design.md)。
-- **进取仓候选：[`ptrade_adm_etf.py`](ptrade_adm_etf.py)**（Antonacci 双动量，4 资产类 + 债底）。
-  仅当**拆分修复后数据**的冻结 OOS CAGR 仍高于 RMDC 的 OOS CAGR，且通过
-  [`docs/anti_overfit.md`](docs/anti_overfit.md) 的过拟合与压力测试关卡时，才作为进取仓实盘。
-  当前报告口径（`research/backtest_adm_report.md`）：ADM OOS 7.54% 对 RMDC 6.21%，过拟合检查通过。
-  **收益一律以报告数字为准，不得宣称"约 12%"等报告未支持的数字。**
+- **进取仓：[`ptrade_adm_etf.py`](ptrade_adm_etf.py)**（Antonacci 双动量，4 资产类 + 债底，
+  实盘 `vol_target` = 0.16，即复权网格确认的 IS 胜者 VT16-MON）。
+  复权后冻结 OOS CAGR **8.17% 对 RMDC 6.44%**，过拟合与压力关卡通过
+  （[`docs/anti_overfit.md`](docs/anti_overfit.md)；明细见
+  [`research/backtest_adm_report.md`](research/backtest_adm_report.md)）。代价是回撤更深：
+  全样本 MDD -21.51%、2026-07 为 -3.90%。
+  **12.03% 只是 ADM 的 IS（样本内）数字，禁止把"约 12%"当作实盘收益承诺**；可引用的实盘预期只有 OOS 8.17%。
 
-已否决 / 仅研究（状态不是收益承诺）：
+状态表（状态不是收益承诺；数字均为拆分复权后口径，来源 `research/compare_strategies.md`）：
 
 | 文件 / 方案 | 状态 | 说明 |
 |---|---|---|
-| `ptrade_combo_etf.py` | REJECTED | 残差动量组合已否决，仅保留为研究对照 |
-| `ptrade_gem_etf.py` | REJECTED | 17 行业池 12-1 动量方案已否决，仅保留复现 |
-| 双层动量（dual-layer，[`docs/alpha_etf_design.md`](docs/alpha_etf_design.md)） | 仅研究 | 只进 `research/` 对比，无实盘文件 |
+| `ptrade_combo_etf.py` | REJECTED | 复权后 OOS 仍 ≈0（-0.03%）且过拟合检查不通过，仅保留为研究对照 |
+| `ptrade_gem_etf.py` | UNDER TEST（重启研究） | 当初的否决数字是**未复权拆分的伪影**；复权后全样本 10.22% / OOS 10.41% / 2026-07 -3.24%。待复权数据上的 IS 网格与完整冻结验证，**不得静默转正为主实盘** |
+| 双层动量（dual-layer，[`docs/alpha_etf_design.md`](docs/alpha_etf_design.md)） | UNREPRODUCED | 共享引擎复现 OOS 5.54%，对设计宣称的 11.1% 未复现；仅研究，无实盘文件 |
 
 ## 数据口径：复权
 
