@@ -63,7 +63,7 @@ Antonacci 双动量（Dual Momentum）：在**少数资产类别**之间轮动�
 **报告文件状态**：
 
 - [`../research/backtest_adm_report.md`](../research/backtest_adm_report.md)、[`../research/compare_strategies.md`](../research/compare_strategies.md) 与 [`../research/ablate_adm_knobs.md`](../research/ablate_adm_knobs.md) 均已在**复权 panel 上重新生成**，可以引用；复权前旧数字仅存于 ADM 报告附录 A，禁止引用。
-- [`../research/ablate_gem_knobs.md`](../research/ablate_gem_knobs.md) 仍是复权前产物，其中一切数字按规则 16 作废；GEM 的 IS 网格须在复权 panel 上重新生成后才可引用（§6）。
+- [`../research/ablate_gem_knobs.md`](../research/ablate_gem_knobs.md) 也已在复权 panel 上重新生成，可以引用：IS 胜者 **VT18-N2-G80**（vol 18%、2 只成长、offense 80/15/5）恰为现行实盘 `ptrade_gem_etf.py` 常量，OOS 10.41% / Sharpe 0.82、2026-07 −3.24%（回撤 −4.71%），过拟合检查 OK（§6）。
 - 引擎内打印的 "overfit check" 是弱条件（仅在 IS Sharpe>1.5 且 OOS Sharpe<0.3 时告警）；本文与报告采用的判据是更严的 **OOS Sharpe ≥ 0.5 × IS Sharpe**。两者对 ADM 结论一致；对 Combo 不一致（弱条件打印 ok，严判据不通过，见 §5）。
 
 ## 4. ADM 验收关卡（gate）与当前状态
@@ -100,7 +100,7 @@ Antonacci 双动量（Dual Momentum）：在**少数资产类别**之间轮动�
 
 **复权后的事实（本次重跑）**：GEM 的灾难数字大部分是**数据伪影**——17 行业池里多只 ETF 带假 −50% 拆分 K 线（512480/512690/512800/515880/515980/516160 等），把动量分数与净值一起打穿。复权后同一引擎打印：全样本 10.22%/−16.77%/0.77，OOS 10.41%/−11.96%/0.82，2026-07 −3.24%。**否决 GEM 的那组数字按规则 16 已作废。**
 
-**结论（两头都要诚实）**：GEM 的状态是 **UNDER TEST（重启研究）**——当初的否决判决是数据伪影所致，按规则 16 作废；但被否决的候选不能因为一次重跑就**悄悄转正为主实盘**，它必须在复权 panel 上重新生成 IS 网格（`ablate_gem_knobs.md` 当前仍是复权前产物、不可引用）、再完整走冻结验证（走前检验、SimTradeLab、国金分钟回测/仿真）后才谈候选资格。这是维护者的重审事项，不是本文的裁定。同时，**ADM 的成立从不依赖 GEM 的失败**（规则 13 双向），ADM 的验收只看 §4 自己的关卡。
+**结论（两头都要诚实）**：GEM 的状态是 **UNDER TEST（重启研究）**——当初的否决判决是数据伪影所致，按规则 16 作废。复权 panel 上的 IS 网格已重新生成（`ablate_gem_knobs.md`）：IS 胜者 **VT18-N2-G80** 恰为现行实盘常量，OOS 10.41% / Sharpe 0.82、2026-07 −3.24%，过拟合检查 OK。但被否决的候选不能因为网格翻身就**悄悄转正为主实盘**：仍须完整走冻结验证（走前检验、SimTradeLab、国金分钟回测/仿真）后才谈候选资格。这是维护者的重审事项，不是本文的裁定。同时，**ADM 的成立从不依赖 GEM 的失败**（规则 13 双向），ADM 的验收只看 §4 自己的关卡。
 
 ## 7. 附录：双层动量（dual-layer）旧规格——未复现，不上实盘
 

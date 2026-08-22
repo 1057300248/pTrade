@@ -25,7 +25,7 @@
 | 文件 / 方案 | 状态 | 说明 |
 |---|---|---|
 | `ptrade_combo_etf.py` | REJECTED | 复权后 OOS 仍 ≈0（-0.03%）且过拟合检查不通过，仅保留为研究对照 |
-| `ptrade_gem_etf.py` | UNDER TEST（重启研究） | 当初的否决数字是**未复权拆分的伪影**；复权后全样本 10.22% / OOS 10.41% / 2026-07 -3.24%。待复权数据上的 IS 网格与完整冻结验证，**不得静默转正为主实盘** |
+| `ptrade_gem_etf.py` | UNDER TEST（重启研究） | 当初的否决数字是**未复权拆分的伪影**；复权后全样本 10.22% / OOS 10.41% / 2026-07 -3.24%。复权 IS 网格已重做（`research/ablate_gem_knobs.md`，IS 胜者 VT18-N2-G80 = 现行实盘常量，过拟合检查 OK）；仍待完整冻结验证，**不得静默转正为主实盘** |
 | 双层动量（dual-layer，[`docs/alpha_etf_design.md`](docs/alpha_etf_design.md)） | UNREPRODUCED | 共享引擎复现 OOS 5.54%，对设计宣称的 11.1% 未复现；仅研究，无实盘文件 |
 
 ## 数据口径：复权
