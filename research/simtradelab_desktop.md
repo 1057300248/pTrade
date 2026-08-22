@@ -63,3 +63,17 @@ PYTHONPATH=/agent/repos/SimTradeLab/src python3 research/run_simtradelab_gem.py
 `research/simtradelab_data`，所有 OHLC/volume 先经过 `research.etf_panel` 的
 `|ret| > 22%` 拆分/合并回调；CNY `amount` 保持不变。上面的 2024–2026 RMDC/GEM
 污染结果仅保留为修复前对照，不再是有效绩效数字。
+
+2026-08-22 04:05 UTC 重建数据后，三条 runner 原样重跑的新打印行：
+
+```
+SimTradeLab RMDC first-filter report: total_return=0.1495454611 annual_return=0.0564999188 max_drawdown=-0.1289755619 sharpe_ratio=0.5532684793
+SimTradeLab GEM  first-filter report: total_return=0.3274721603 annual_return=0.1181937687 max_drawdown=-0.1513377418 sharpe_ratio=0.7798450259
+SimTradeLab ADM  first-filter report: total_return=0.5998605068 annual_return=0.2036025210 max_drawdown=-0.1525522699 sharpe_ratio=1.1659623612
+```
+
+新图表：
+
+- `/opt/cursor/artifacts/simtradelab_rmdc_adjusted.png`
+- `/opt/cursor/artifacts/simtradelab_gem_adjusted.png`
+- `/opt/cursor/artifacts/simtradelab_adm_adjusted.png`
