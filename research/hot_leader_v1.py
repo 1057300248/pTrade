@@ -89,8 +89,9 @@ def _last_extreme_index(values, compare):
     finite = np.isfinite(values)
     if not finite.any():
         return None
-    filled = np.where(finite, values, compare)
-    target = compare(filled)
+    target = compare(values)
+    if not np.isfinite(target):
+        return None
     matches = np.flatnonzero(finite & (values == target))
     if matches.size == 0:
         return None

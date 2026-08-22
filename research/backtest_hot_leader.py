@@ -103,7 +103,8 @@ def _window_return(nav, dates, start, end):
     return float(values[-1] / values[0] - 1.0)
 
 
-def run_backtest(calendar, market, panel, use_industry=False, industries=None):
+def run_backtest(calendar, market, panel, use_industry=False, industries=None,
+                 require_macd=True, require_fib=True):
     dates = calendar.to_numpy(dtype="datetime64[ns]")
     n_days = dates.size
     codes = list(panel.keys())
@@ -226,9 +227,9 @@ def run_backtest(calendar, market, panel, use_industry=False, industries=None):
 
         passed = []
         for j in union:
-            if not macd_pass[j, t]:
+            if require_macd and not macd_pass[j, t]:
                 continue
-            if not fib_ok(highs[j], lows[j], closes[j], t):
+            if require_fib and not fib_ok(highs[j], lows[j], closes[j], t):
                 continue
             passed.append(j)
         passed.sort(key=lambda j: rets[j], reverse=True)
@@ -320,6 +321,8 @@ def run_backtest(calendar, market, panel, use_industry=False, industries=None):
         },
         "one_way_turnover_notional_per_year": turnover,
         "use_industry": bool(use_industry),
+        "require_macd": bool(require_macd),
+        "require_fib": bool(require_fib),
     }
     return result, dates_ts, nav, bench_nav
 
@@ -352,15 +355,35 @@ def print_report(result):
 
 def main():
     calendar, market, panel = load_universe()
-    result, dates, nav, bench = run_backtest(calendar, market, panel, use_industry=False)
-    print_report(result)
+    variants = [
+        ("V1", True, True),
+        ("MACD-only", True, False),
+        ("no-tech", False, False),
+    ]
     out_dir = os.path.join(os.path.dirname(__file__), "cache", "hot_leader_daily")
     os.makedirs(out_dir, exist_ok=True)
+    all_results = {}
+    official_nav = None
+    dates = None
+    bench = None
+    for name, require_macd, require_fib in variants:
+        print("==== %s macd=%s fib=%s ====" % (name, require_macd, require_fib))
+        result, dates, nav, bench = run_backtest(
+            calendar, market, panel,
+            use_industry=False,
+            require_macd=require_macd,
+            require_fib=require_fib,
+        )
+        print_report(result)
+        all_results[name] = result
+        if name == "V1":
+            official_nav = nav
+            pd.DataFrame({"date": dates, "nav": nav, "bench": bench}).to_csv(
+                os.path.join(out_dir, "nav.csv"), index=False
+            )
     with open(os.path.join(out_dir, "backtest_result.json"), "w") as handle:
-        json.dump(result, handle, indent=2)
-    frame = pd.DataFrame({"date": dates, "nav": nav, "bench": bench})
-    frame.to_csv(os.path.join(out_dir, "nav.csv"), index=False)
-    return result
+        json.dump(all_results, handle, indent=2)
+    return all_results
 
 
 if __name__ == "__main__":
