@@ -255,17 +255,14 @@ def _extract_row(strategy, result, output):
 def _benchmark_row():
     import numpy as np
     import pandas as pd
+    from etf_panel import load_panel
 
-    path = os.path.join(HERE, "cache", "etf_daily", "510300.SS.parquet")
-    if not os.path.isfile(path):
-        raise IOError("%s is missing" % path)
-    frame = pd.read_parquet(path)
-    frame = frame.dropna(subset=["date", "close"]).sort_values("date")
-    frame = frame.drop_duplicates("date", keep="last")
-    dates = pd.DatetimeIndex(frame["date"])
+    bars = load_panel(codes=("510300.SS",))["510300.SS"]
+    dates = pd.DatetimeIndex(bars["dates"])
+    closes = np.asarray(bars["close"], dtype=float)
     mask = (dates >= pd.Timestamp(START)) & (dates <= pd.Timestamp(END))
     dates = dates[mask]
-    navs = frame.loc[mask, "close"].to_numpy(dtype=float)
+    navs = closes[mask]
     navs = navs / navs[0]
 
     def perf(sub_navs, sub_dates):
