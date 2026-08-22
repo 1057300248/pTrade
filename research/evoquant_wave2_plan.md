@@ -1,6 +1,11 @@
 # EvoQuant Wave 2 predeclared plan
 
 Status: **PREDECLARED — NOT RUN**.
+> Execution ledger: [`wave2_execution_ledger.md`](wave2_execution_ledger.md).
+>
+> The ledger pre-registers all eight declared grid points before execution.
+> It contains no results; the grids have not been run.
+> Results require a separate, explicitly requested research step.
 
 This document freezes Wave 2 before any candidate backtest. It proposes three
 research candidates only. No `ptrade_*.py` file is changed, and no result in
