@@ -67,8 +67,8 @@ def rank_ic(factor_row, fwd_return_row):
 
     factor_rank = pd.Series(factor[finite]).rank(method="average").to_numpy()
     return_rank = pd.Series(forward[finite]).rank(method="average").to_numpy()
-    factor_rank -= factor_rank.mean()
-    return_rank -= return_rank.mean()
+    factor_rank = factor_rank - factor_rank.mean()
+    return_rank = return_rank - return_rank.mean()
     denominator = math.sqrt(
         float(np.dot(factor_rank, factor_rank) * np.dot(return_rank, return_rank))
     )
