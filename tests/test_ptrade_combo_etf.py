@@ -78,6 +78,19 @@ def test_offense_targets_are_more_aggressive_than_balanced_targets():
     assert len([code for code in diversifiers if code in offense]) == 2
 
 
+def test_single_eligible_name_can_fill_each_offense_sleeve():
+    targets = build_targets(
+        STATE_ON,
+        ["G1"],
+        ["D1"],
+        {"G1": 0.10, "D1": 0.10},
+        vol_target=0.18,
+    )
+
+    assert np.isclose(targets["G1"], 0.85)
+    assert np.isclose(targets["D1"], 0.12)
+
+
 def test_growth_cluster_halves_growth_sleeve():
     growth = ["G1", "G2", "G3"]
     diversifiers = ["D1", "D2"]
@@ -140,6 +153,7 @@ def test_crash_defaults_are_six_percent_one_day_or_eight_percent_three_day():
     stable = np.array([100.0, 101.0, 102.0, 100.0, 96.0])
 
     assert crash_triggered(one_day)
+    assert crash_triggered(np.array([100.0, 94.0]))
     assert crash_triggered(three_day)
     assert not crash_triggered(stable)
 

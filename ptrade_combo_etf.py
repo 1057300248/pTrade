@@ -259,7 +259,7 @@ def filter_correlated(ranked, ret60_map, threshold=0.70):
     return selected
 
 
-def inverse_vol_weights(codes, vol_map, cap=0.50):
+def inverse_vol_weights(codes, vol_map, cap=1.0):
     if not codes:
         return {}
     inverse = []
@@ -376,13 +376,13 @@ def lot_shares(value, price, lot=100):
 
 def crash_triggered(closes, single_day=0.06, three_day=0.08):
     closes = np.asarray(closes, dtype=float)
-    if len(closes) < 4:
+    if len(closes) < 2:
         return False
     if closes[-2] > 0:
         one_day = (closes[-2] - closes[-1]) / closes[-2]
         if one_day >= single_day:
             return True
-    if closes[-4] > 0:
+    if len(closes) >= 4 and closes[-4] > 0:
         three_days = (closes[-4] - closes[-1]) / closes[-4]
         if three_days >= three_day:
             return True
