@@ -2,6 +2,9 @@
 
 时点 2026-08-22。执行细则见 [`next_optimization.md`](next_optimization.md)；关卡与红线以
 [`anti_overfit.md`](anti_overfit.md) 为准。本文不引入任何新的 OOS 数字。
+两名文献/日志子代理在联网核对后的联合裁决见
+[`../research/strategy_next_from_logs.md`](../research/strategy_next_from_logs.md)：
+先对齐 RMDC hysteresis（N=0），再原样跑 Wave 2；不开新格点。
 
 ## 1. 现状（一句话）
 
