@@ -21,7 +21,15 @@ def _copy_strategy():
     src = os.path.join(ROOT, "ptrade_adm_etf.py")
     dest_dir = os.path.join(ROOT, "strategies", "ptrade_adm_etf")
     os.makedirs(dest_dir, exist_ok=True)
-    shutil.copy(src, os.path.join(dest_dir, "backtest.py"))
+    dest = os.path.join(dest_dir, "backtest.py")
+    shutil.copy(src, dest)
+    # SimTradeLab requires handle_data; ADM has no intraday logic (its crash
+    # overlay runs via run_daily at 14:45), so append a no-op stub.
+    with open(src, "r", encoding="utf-8") as handle:
+        source = handle.read()
+    if "def handle_data(" not in source:
+        with open(dest, "a", encoding="utf-8") as handle:
+            handle.write("\n\ndef handle_data(context, data):\n    pass\n")
     return dest_dir
 
 
