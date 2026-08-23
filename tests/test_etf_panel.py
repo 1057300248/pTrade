@@ -32,6 +32,7 @@ def test_detect_jumps_and_stack_multiple_adjustments(tmp_path):
     bars = load_panel(tmp_path)["TEST.SS"]
 
     assert np.allclose(bars["close"], [40.0, 40.0, 44.0, 44.0])
+    assert np.allclose(bars["open"], [39.6, 39.6, 43.56, 43.56])
     assert np.allclose(bars["volume"], [250.0, 250.0, 200.0, 200.0])
     assert np.array_equal(bars["amount"], frame["amount"].to_numpy(dtype=float))
     adjusted_returns = bars["close"][1:] / bars["close"][:-1] - 1.0

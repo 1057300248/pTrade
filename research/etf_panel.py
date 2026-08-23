@@ -73,6 +73,7 @@ def _load_one(path):
     amount = np.where(np.isfinite(amount), amount, fallback_amount)
     return {
         "dates": frame["date"].to_numpy(dtype="datetime64[ns]"),
+        "open": adjusted["open"],
         "high": adjusted["high"],
         "low": adjusted["low"],
         "close": adjusted["close"],

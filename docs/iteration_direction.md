@@ -15,6 +15,11 @@ Wave 2 已于 2026-08-22 执行，累计 **N=16**。结果见
 **不要开 RL/ML/NN/树训练**；下一步是纸面 `TRANCHE-N2`，再按预登记跑
 `max(vol20,vol60)` 与黄金袖仓，禁止新自由网格。
 
+手点「热点龙头」代理规格与回测见
+[`../research/hot_leader_v1.md`](../research/hot_leader_v1.md)；贴近原手点的页面与留档见
+[`../research/hot_leader_closer_ops.md`](../research/hot_leader_closer_ops.md)。
+那是独立研究账，**不是**同花顺原榜复现，不得并入 ADM/RMDC 参数。
+
 ## 1. 现状（一句话）
 
 在位者是 **ADM（进取，OOS 8.17%）与 RMDC（保守，OOS 6.44%，2026-07 −0.71%）**；
