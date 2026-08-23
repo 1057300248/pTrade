@@ -2,6 +2,8 @@
 
 时点 2026-08-22。研究账 `HOT-LEADER-V1`，`RESEARCH_ONLY`，不改 `ptrade_*.py`，
 不接同花顺/国金交易 API，不写 hexin-v 绕过。
+怎样把**手点**贴近原操作（页面、尾盘窗口、从明天起留档）见
+[`hot_leader_closer_ops.md`](hot_leader_closer_ops.md)。
 
 用户口头规则：同花顺强势/热点板块的概念龙头 ∪ 当天资金流入前 30；盘面向上；
 MACD 与斐波那契形态尚可则买；大单/主力资金流出则卖。
